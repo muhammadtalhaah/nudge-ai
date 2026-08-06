@@ -1,0 +1,30 @@
+{
+  "name": "nudge-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-assisted appointment booking prototype — React + Express + PostgreSQL + Mistral",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm -w server run dev\" \"npm -w client run dev\"",
+    "build": "npm -w client run build && npm -w server run build",
+    "start": "npm -w server run start",
+    "db:setup": "npm -w server run db:setup",
+    "db:seed": "npm -w server run db:seed",
+    "db:reset": "npm -w server run db:reset",
+    "test": "npm -w server run test && npm -w client run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.4.2"
+  }
+}

@@ -1,0 +1,86 @@
+# =============================================================================
+#  Render blueprint — one web service, one managed Postgres.
+# =============================================================================
+#  Deploy: push this repo, then in Render choose "New → Blueprint" and point it here.
+#  Everything below is provisioned automatically except the two secrets marked sync: false,
+#  which Render will prompt for (and which must never live in this file).
+#
+#  Set MISTRAL_API_KEY in the dashboard to enable the real model. Left unset, the app runs
+#  on its deterministic offline assistant rather than failing to boot.
+# =============================================================================
+
+databases:
+  - name: nudge-ai-db
+    databaseName: nudge_ai
+    user: nudge_ai
+    plan: free
+    postgresMajorVersion: '16'
+
+services:
+  - type: web
+    name: nudge-ai
+    runtime: node
+    plan: free
+    region: oregon
+
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+
+    # Readiness endpoint: also confirms the database is reachable before taking traffic.
+    healthCheckPath: /api/ready
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Render injects PORT; the server reads it.
+      - key: PORT
+        value: 4000
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nudge-ai-db
+          property: connectionString
+
+      # Render's managed Postgres requires TLS.
+      - key: DATABASE_SSL
+        value: 'true'
+
+      # Free-tier Postgres allows few connections; stay well under the ceiling.
+      - key: DATABASE_POOL_MAX
+        value: '5'
+
+      # Generated once by Render and then held — rotating these would invalidate every
+      # live session, so they are not regenerated on redeploy.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: REFRESH_TTL_DAYS
+        value: '30'
+      - key: BCRYPT_ROUNDS
+        value: '12'
+
+      - key: DEFAULT_BUSINESS_SLUG
+        value: northside-health
+
+      # Set in the dashboard to switch from the offline assistant to Mistral.
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: MISTRAL_MODEL
+        value: mistral-small-latest
+
+      - key: LOG_LEVEL
+        value: info
+      # Must stay false in production — the server refuses to boot otherwise, so logs are
+      # always machine-readable JSON.
+      - key: LOG_PRETTY
+        value: 'false'
+
+      # The client is served from this same service, so no cross-origin request exists.
+      # Kept present and empty rather than omitted, to document that it is deliberate.
+      - key: CORS_ORIGINS
+        value: ''

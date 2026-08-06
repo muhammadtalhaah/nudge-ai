@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nudge AI — Appointment Booking</title>
+    <meta name="description" content="Book appointments by chatting with an AI assistant." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Tints the browser chrome on mobile to match the app surface in each theme. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a" />
+    <script>
+      // Apply the persisted theme before first paint so a dark-mode reload never flashes
+      // white. Kept inline and tiny on purpose — it must run before the bundle loads.
+      (function () {
+        try {
+          var stored = localStorage.getItem('nudge-ai-theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var dark = stored === 'dark' || ((!stored || stored === 'system') && prefersDark);
+          document.documentElement.classList.toggle('dark', dark);
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage unavailable (private mode) — fall back to light. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

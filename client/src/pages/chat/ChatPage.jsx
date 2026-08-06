@@ -1,0 +1,188 @@
+/**
+ * The assistant — the app's primary surface.
+ *
+ * A container: it owns layout and presentation, and delegates all state and transport to
+ * useChatSession.
+ */
+
+import { useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Bot, Sparkles, WifiOff } from 'lucide-react';
+
+import ChatComposer from './components/ChatComposer';
+import ChatMessage from './components/ChatMessage';
+import StreamingMessage from './components/StreamingMessage';
+import TypingIndicator from './components/TypingIndicator';
+import useChatSession from './hooks/useChatSession';
+import ErrorState from '@/components/shared/ErrorState';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { SOCKET_STATUS } from '@/hooks/useSocket';
+
+/** Concrete examples, so a first-time user knows what the assistant can actually do. */
+const SUGGESTIONS = [
+  'I need to see a dermatologist next Tuesday morning',
+  'Book me a general check-up tomorrow at 10am',
+  'What appointments do I have coming up?',
+];
+
+const ChatPage = () => {
+  /**
+   * Which conversation is open lives in the URL, so the sidebar can switch conversations by
+   * navigation alone, and a reload or a shared link reopens the same thread.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSessionId = searchParams.get('session');
+
+  // Reflect whichever session actually opened — replace rather than push, so switching
+  // conversations does not fill the back button with history entries.
+  const handleSessionResolved = useCallback(
+    (id) => {
+      setSearchParams(
+        (current) => {
+          const params = new URLSearchParams(current);
+          if (params.get('session') === id) return params;
+          params.set('session', id);
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const {
+    messages,
+    isBootstrapping,
+    isAwaitingReply,
+    streamingText,
+    error,
+    socketStatus,
+    sendMessage,
+    retry,
+  } = useChatSession(requestedSessionId, handleSessionResolved);
+
+  const scrollRef = useRef(null);
+  const bottomRef = useRef(null);
+
+  // Follow the conversation as it grows. Also fires on the typing indicator and on each
+  // streamed fragment, so neither the "working" state nor the growing reply slips below the
+  // fold. 'auto' rather than 'smooth' while streaming: a smooth scroll re-triggered every few
+  // tokens never finishes, and the view lags behind the text.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({
+      behavior: streamingText ? 'auto' : 'smooth',
+      block: 'end',
+    });
+  }, [messages, isAwaitingReply, streamingText]);
+
+  const isOffline =
+    socketStatus === SOCKET_STATUS.DISCONNECTED || socketStatus === SOCKET_STATUS.RECONNECTING;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      {/* "New conversation" now lives in the sidebar, alongside the conversation list it
+          affects, rather than being duplicated here. */}
+      <div className="shrink-0">
+        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+          <Sparkles className="text-primary size-5" aria-hidden="true" />
+          Assistant
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          Describe what you need and I will book it. No forms unless you want them.
+        </p>
+      </div>
+
+      {/* Connection state is surfaced rather than hidden — messages still send over REST. */}
+      {isOffline ? (
+        <Alert>
+          <WifiOff className="size-4" aria-hidden="true" />
+          <AlertDescription>
+            {socketStatus === SOCKET_STATUS.RECONNECTING
+              ? 'Reconnecting… your messages will still send.'
+              : 'Live updates are offline. Messages still send, but replies may be slower to appear.'}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+        {/* aria-live so incoming assistant replies are announced without stealing focus. */}
+        <div
+          ref={scrollRef}
+          className="flex-1 space-y-4 overflow-y-auto p-4"
+          role="log"
+          aria-live="polite"
+          aria-label="Conversation"
+        >
+          {isBootstrapping ? (
+            <div className="space-y-4" aria-busy="true">
+              <span className="sr-only">Loading your conversation</span>
+              <Skeleton className="h-12 w-3/5" />
+              <Skeleton className="ml-auto h-12 w-2/5" />
+              <Skeleton className="h-20 w-4/5" />
+            </div>
+          ) : error && messages.length === 0 ? (
+            <ErrorState message={error} onRetry={retry} />
+          ) : messages.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+              <div className="bg-secondary rounded-full p-3">
+                <Bot className="text-secondary-foreground size-6" aria-hidden="true" />
+              </div>
+              <div className="space-y-1">
+                <p className="font-medium">How can I help?</p>
+                <p className="text-muted-foreground text-sm">Ask in your own words.</p>
+              </div>
+
+              <div className="flex w-full max-w-md flex-col gap-2">
+                {SUGGESTIONS.map((suggestion) => (
+                  <Button
+                    key={suggestion}
+                    variant="outline"
+                    size="sm"
+                    className="h-auto justify-start py-2 text-left whitespace-normal"
+                    onClick={() => sendMessage(suggestion)}
+                  >
+                    {suggestion}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map((message) => (
+                <ChatMessage key={message.id} message={message} />
+              ))}
+
+              {/* Once prose is arriving it replaces the dots — the reply itself is the better
+                  progress indicator. The dots remain for the wait before the first token, and
+                  for turns that do not stream at all. */}
+              {streamingText ? (
+                <StreamingMessage text={streamingText} />
+              ) : isAwaitingReply ? (
+                <TypingIndicator />
+              ) : null}
+            </>
+          )}
+
+          {/* Scroll anchor. */}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* A send failure appears above the composer, where the retry action is. */}
+        {error && messages.length > 0 ? (
+          <div className="px-4 pb-2">
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
+
+        <ChatComposer onSend={sendMessage} disabled={isBootstrapping} isSending={isAwaitingReply} />
+      </Card>
+    </div>
+  );
+};
+
+export default ChatPage;

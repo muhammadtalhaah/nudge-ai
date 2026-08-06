@@ -1,0 +1,21 @@
+<!--
+  Placeholder mark: a calendar with a tick, matching the CalendarHeart used in the app header.
+  Replace with the real brand mark when the design spec arrives — see client/src/styles/theme.css.
+
+  Uses a mid-tone slate that stays legible on both light and dark browser tab strips, since a
+  favicon cannot respond to the page theme.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect x="2" y="2" width="28" height="28" rx="7" fill="#18181b" />
+  <g
+    fill="none"
+    stroke="#fafafa"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <rect x="8" y="10" width="16" height="14" rx="2.5" />
+    <path d="M12 7.5v4M20 7.5v4M8 15h16" />
+    <path d="M13 19.5l2.2 2.2L20 17" />
+  </g>
+</svg>

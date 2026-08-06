@@ -1,0 +1,249 @@
+/**
+ * ============================================================================
+ *  THE DESIGN TOKEN LAYER — this is the only file a visual redesign touches.
+ * ============================================================================
+ *
+ *  No feature component hardcodes a colour, radius, font or spacing value. They all
+ *  consume the semantic tokens below, so a new palette / typography / radius spec can be
+ *  dropped in here without editing a single component.
+ *
+ *  Values are currently shadcn/ui's default "neutral" base, which is deliberate: the
+ *  assessment brief states branding polish is not evaluated, and the final palette is
+ *  still to be supplied.
+ *
+ *  To restyle:
+ *    1. Replace the oklch() values in :root and .dark.
+ *    2. Change --radius (one value drives every corner in the app).
+ *    3. Point --font-sans / --font-mono at the chosen typefaces.
+ *  Nothing else needs to change.
+ */
+
+/* Tailwind v4 has no JS config, so dark mode is declared as a custom variant.
+   Class-based (not media-based) because the theme is user-togglable and persisted. */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* One radius drives the whole scale below. */
+  --radius: 0.625rem;
+
+  /* Surfaces and text */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+
+  /* Brand — replace these two pairs first when the palette arrives. */
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* Appointment status. Semantic on purpose — a status colour is never written inline,
+     it is looked up by status through AppStatusBadge. Every status also carries an icon
+     and a text label so colour is never the only signal (WCAG 1.4.1). */
+  --status-pending: oklch(0.75 0.15 80);
+  --status-pending-foreground: oklch(0.25 0.05 80);
+  --status-confirmed: oklch(0.65 0.15 155);
+  --status-confirmed-foreground: oklch(0.22 0.05 155);
+  --status-cancelled: oklch(0.6 0.2 25);
+  --status-cancelled-foreground: oklch(0.98 0.01 25);
+  --status-completed: oklch(0.6 0.12 250);
+  --status-completed-foreground: oklch(0.98 0.01 250);
+  --status-no-show: oklch(0.55 0.02 0);
+  --status-no-show-foreground: oklch(0.98 0 0);
+
+  /* Sidebar. A distinct surface from --background so the navigation reads as chrome rather
+     than page content; light mode nudges it slightly grey, dark mode slightly lighter. */
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Charts (unused in this prototype's scope, kept so the token set is complete). */
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.556 0 0);
+
+  /* Status colours are lifted in dark mode to hold contrast against a dark surface. */
+  --status-pending: oklch(0.82 0.15 80);
+  --status-pending-foreground: oklch(0.2 0.05 80);
+  --status-confirmed: oklch(0.75 0.16 155);
+  --status-confirmed-foreground: oklch(0.18 0.05 155);
+  --status-cancelled: oklch(0.68 0.19 25);
+  --status-cancelled-foreground: oklch(0.15 0.02 25);
+  --status-completed: oklch(0.7 0.13 250);
+  --status-completed-foreground: oklch(0.15 0.02 250);
+  --status-no-show: oklch(0.7 0.02 0);
+  --status-no-show-foreground: oklch(0.15 0 0);
+
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.922 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+}
+
+/**
+ * Expose the tokens above to Tailwind as utility namespaces, so `bg-card`,
+ * `text-muted-foreground`, `border-border`, `rounded-lg` and `sm-tablet:` all resolve
+ * from this file.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-foreground: var(--status-pending-foreground);
+  --color-status-confirmed: var(--status-confirmed);
+  --color-status-confirmed-foreground: var(--status-confirmed-foreground);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-cancelled-foreground: var(--status-cancelled-foreground);
+  --color-status-completed: var(--status-completed);
+  --color-status-completed-foreground: var(--status-completed-foreground);
+  --color-status-no-show: var(--status-no-show);
+  --color-status-no-show-foreground: var(--status-no-show-foreground);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /**
+   * Semantic breakpoints from the company frontend standard. Tailwind v4 derives the
+   * variant name from the custom-property name, so these are hyphenated here and used as
+   * `sm-tablet:` / `md-desktop:` rather than the standard's `sm_tablet:` spelling. Same
+   * pixel values; the underscore form is not valid as a v4 variant name.
+   */
+  --breakpoint-sm-mobile: 18.75rem; /* 300px */
+  --breakpoint-md-mobile: 21.875rem; /* 350px */
+  --breakpoint-lg-mobile: 26.25rem; /* 420px */
+  --breakpoint-sm-tablet: 37.5rem; /* 600px */
+  --breakpoint-md-tablet: 46.875rem; /* 750px */
+  --breakpoint-lg-tablet: 62rem; /* 992px */
+  --breakpoint-sm-desktop: 75.375rem; /* 1206px */
+  --breakpoint-md-desktop: 84.375rem; /* 1350px */
+  --breakpoint-xm-desktop: 93.75rem; /* 1500px */
+  --breakpoint-lg-desktop: 118.75rem; /* 1900px */
+  --breakpoint-xl-desktop: 131.25rem; /* 2100px */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Visible focus for keyboard users on every interactive element. */
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+
+  /* Respect a user's reduced-motion preference rather than animating regardless. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

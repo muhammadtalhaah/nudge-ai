@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# environment — never commit real secrets, only .env.example
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+logs/
+
+# test / coverage
+coverage/
+.vitest/
+
+# editor + OS
+.DS_Store
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+
+.claude
+.smoke-shots/
+scripts
+.editorconfig
+ARCHITECTURE.md
+Dockerfile
