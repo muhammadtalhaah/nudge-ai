@@ -50,8 +50,8 @@ when a key is present and the offline assistant when it is not.
 | Command                                     | What it does                                                        |
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | `npm run dev`                               | API + client with hot reload                                        |
-| `npm run build`                             | Builds the client, then bundles the server                          |
-| `npm start`                                 | Runs the production build (serves API **and** client from one port) |
+| `npm run build`                             | Builds the client (the server runs from source — no build step)     |
+| `npm start`                                 | Runs the server for production (serves API **and** client from one port) |
 | `npm test`                                  | Full suite — server (real Postgres) then client (jsdom)             |
 | `npm run db:setup` / `db:seed` / `db:reset` | Schema, sample data, drop-and-recreate                              |
 | `npm run format`                            | Prettier                                                            |
@@ -69,7 +69,7 @@ when a key is present and the offline assistant when it is not.
                             │  same origin: Vite proxies /api in dev,
                             │  the API serves the bundle in production
 ┌───────────────────────────▼─────────────────────────────────────┐
-│  server/          Node + Express 5 + Socket.IO (TypeScript)     │
+│  server/          Node + Express 5 + Socket.IO (JavaScript)     │
 │                                                                 │
 │   routes  →  controllers  →  services  →  repositories  →  pg   │
 │   wiring     HTTP↔service    rules +        SQL +               │
@@ -162,7 +162,7 @@ rendered as if it were real.
 ### Streaming the reply
 
 The model does not emit prose — it emits a JSON object, and the prose is one field inside it.
-So streaming is not "forward the tokens": `ai/replyStream.ts` decodes the `reply` string out
+So streaming is not "forward the tokens": `ai/replyStream.js` decodes the `reply` string out
 of a document whose closing brace has not arrived yet, and forwards only that. The structure
 around it (`intent`, `fields`, `missing`) is never shown, and no JSON parser is ever run over
 an incomplete document. Fragments go out as `assistant:delta`; the finished turn follows as
@@ -281,14 +281,14 @@ testing instead of passing silently.
 **Socket.IO over SSE or polling.** The brief named WebSockets or polling. Polling is wasteful
 and feels laggy; SSE would fit the unidirectional shape better but is neither option named.
 Socket.IO gives literal compliance plus a typing indicator and multi-tab sync. The cost is a
-socket server to authenticate and shut down cleanly — handled in `socket.ts`, and it is
+socket server to authenticate and shut down cleanly — handled in `socket.js`, and it is
 transport only.
 
 **Streaming decodes the model's JSON rather than animating a finished string.** The easy
 version of this feature is to compute the reply, then reveal it a few characters at a time —
 identical on screen, and worth nothing, since the user still waits for the whole turn before
 anything appears. Streaming the real generation costs an incremental scanner
-(`ai/replyStream.ts`) and a provider capability flag, and gives back genuine time-to-first-word.
+(`ai/replyStream.js`) and a provider capability flag, and gives back genuine time-to-first-word.
 It also keeps the codebase honest with itself: the same reason the offline stub is labelled
 degraded rather than passed off as a model is the reason it does not fake a token stream.
 
@@ -315,13 +315,18 @@ exactly the thing worth being explicit about. The tradeoff is more boilerplate i
 deliverable. Maintaining migrations _and_ a schema file creates two sources of truth. A real
 deployment would use versioned migrations — called out under limitations.
 
-**Zod schemas shared by both sides, with no build step.** `shared/` holds plain `.ts` files.
-The TypeScript server imports them and gets full inference; Vite transpiles the same files for
-the JavaScript client. No workspace package, no watch task, no `dist` to go stale, and a
-validation rule cannot disagree between browser and API.
+**Zod schemas shared by both sides, with no build step.** `shared/` holds plain `.js`
+modules. The server imports them directly at run time and Vite bundles the same files for the
+client. No workspace package, no watch task, no `dist` to go stale, and a validation rule
+cannot disagree between browser and API.
 
-**TypeScript server, JavaScript client.** TS where the contracts and business rules live;
-plain JS on the client, matching the team standard the repo ships as a skill.
+**JavaScript end to end, with validation at the edges.** Both packages are plain ES modules,
+so the server runs straight from source — no compile step in dev, in test, or in the
+container. Correctness at the boundaries is enforced at run time instead of at compile time,
+which is where it actually matters: every request body, query string and model response is
+parsed through a Zod schema before any other code sees it, and the shapes that are documentation
+rather than enforcement (the chat reply contract, the AI provider interface) are JSDoc typedefs
+that editors still resolve.
 
 **Tests hit a real database.** The guarantees that matter — the exclusion constraint,
 rotation under concurrency — are enforced _by_ Postgres. A mocked `pg` client would let every
@@ -395,21 +400,21 @@ calls.
 
 The tests worth reading:
 
-- **`appointmentService.test.ts`** — ten concurrent bookings for one slot; exactly one wins.
+- **`appointmentService.test.js`** — ten concurrent bookings for one slot; exactly one wins.
   Also partial overlap, back-to-back legality, cancel-frees-the-slot, and the cross-user IDOR
   matrix.
-- **`chatService.test.ts`** — every way a model can misbehave (prose instead of JSON,
+- **`chatService.test.js`** — every way a model can misbehave (prose instead of JSON,
   truncated JSON, invented intent, invented doctor, another tenant's doctor, outage, timeout)
   and the assertion that each degrades to the form with nothing booked.
-- **`authService.test.ts`** — refresh rotation, replay revoking the family, and five
+- **`authService.test.js`** — refresh rotation, replay revoking the family, and five
   concurrent refreshes yielding exactly one winner. The replay test is a regression test for a
   real bug: the family revocation originally ran inside the transaction that then threw, so the
   rollback silently undid it.
-- **`socket.test.ts`** — the socket enforces the same ownership and booking rules as REST, and
+- **`socket.test.js`** — the socket enforces the same ownership and booking rules as REST, and
   neither a reply nor a streamed fragment leaks to another user's socket. The streaming cases
   assert that fragments sum to the final reply, that the JSON around it never escapes, and
   that the user's message is echoed before any of the answer to it.
-- **`replyStream.test.ts`** — the scanner, fed a document one character at a time and in
+- **`replyStream.test.js`** — the scanner, fed a document one character at a time and in
   chunks of every awkward size, because a network read can land between a backslash and what
   it escapes or between the halves of a surrogate pair. Also the near-misses: the word "reply"
   inside an earlier value, a nested key of the same name, `"reply": null`, and a response cut

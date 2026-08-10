@@ -23,7 +23,13 @@ services:
     plan: free
     region: oregon
 
-    buildCommand: npm ci && npm run build
+    # Only the client is built — the server is plain JavaScript and runs from source.
+    #
+    # `--include=dev` is required, not optional: NODE_ENV=production (below, and Render's
+    # default for Node services) makes npm omit devDependencies, and Vite and its plugins
+    # live there. Without it the build fails with "vite: not found". The devDependencies
+    # are build-time only — nothing loads them at run time.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
 
     # Readiness endpoint: also confirms the database is reachable before taking traffic.

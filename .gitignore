@@ -4,7 +4,6 @@ node_modules/
 # build output
 dist/
 build/
-*.tsbuildinfo
 
 # environment — never commit real secrets, only .env.example
 .env
@@ -29,7 +28,8 @@ coverage/
 
 .claude
 .smoke-shots/
-scripts
+# Anchored to the repo root on purpose: an unanchored `scripts` also matches
+# server/scripts/, which holds db:setup and db:seed — the deployment needs those.
+/scripts/
 .editorconfig
-ARCHITECTURE.md
 Dockerfile
