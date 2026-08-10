@@ -56,6 +56,11 @@
  *   helping narrow a choice.
  * @property {ChatAppointmentSummary} [appointment] Set when kind is APPOINTMENT_CREATED.
  * @property {ChatAppointmentSummary[]} [appointments] Set when kind is APPOINTMENT_LIST.
+ * @property {string[]} [slots] Free start times as ISO instants, set when kind is SLOT_LIST.
+ *   Instants rather than "10:00" for the same reason a booking confirmation carries no time:
+ *   the server knows the clinic's timezone and the client knows the viewer's, and only one of
+ *   them should be formatting.
+ * @property {string} [slotDate] The day those slots fall on, YYYY-MM-DD in clinic time.
  * @property {boolean} [degraded] True when the reply came from the offline rule-based
  *   provider rather than an LLM. The UI surfaces this rather than passing a keyword matcher
  *   off as a language model.

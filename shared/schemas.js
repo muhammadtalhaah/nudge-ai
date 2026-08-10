@@ -135,16 +135,27 @@ export const sendMessageSchema = z.object({
 
 /**
  * The booking details the model is asked to pull out of the conversation.
- * Every field is nullable rather than optional: a model is far more reliable at emitting
- * an explicit `null` than at omitting a key.
+ *
+ * A missing key means the same thing as an explicit null and is accepted as one. The prompt
+ * asks for all five every time, and models mostly comply — but not when there is nothing to
+ * report: asked "what have I got booked?", Mistral returns `"fields": {}`, which is a
+ * perfectly good answer to the question. Insisting on the keys rejected the whole turn and
+ * handed the person a booking form instead of their appointments.
+ *
+ * Values are still validated exactly as strictly. A malformed date is a failure; an absent
+ * one is not.
  */
-export const bookingFieldsSchema = z.object({
-  specialty: z.string().trim().max(80).nullable(),
-  providerName: z.string().trim().max(120).nullable(),
-  date: calendarDateSchema.nullable(),
-  time: clockTimeSchema.nullable(),
-  notes: z.string().trim().max(LIMITS.NOTES_MAX_LENGTH).nullable(),
-});
+const absentAsNull = (schema) => schema.nullish().transform((value) => value ?? null);
+
+export const bookingFieldsSchema = z
+  .object({
+    specialty: absentAsNull(z.string().trim().max(80)),
+    providerName: absentAsNull(z.string().trim().max(120)),
+    date: absentAsNull(calendarDateSchema),
+    time: absentAsNull(clockTimeSchema),
+    notes: absentAsNull(z.string().trim().max(LIMITS.NOTES_MAX_LENGTH)),
+  })
+  .default({});
 
 /**
  * The contract the LLM must satisfy. Its output is parsed through this before anything
@@ -154,6 +165,9 @@ export const bookingFieldsSchema = z.object({
 export const aiExtractionSchema = z.object({
   intent: z.enum(CHAT_INTENT_VALUES),
   fields: bookingFieldsSchema,
-  missing: z.array(z.enum(BOOKING_FIELDS)),
+  // Like `fields`: absent is a claim that nothing is missing, not a malformed response.
+  missing: z.array(z.enum(BOOKING_FIELDS)).default([]),
+  // The two that must be there. An unknown intent is a model inventing capabilities, and a
+  // turn with no prose has nothing to show the person — both are real failures.
   reply: z.string().trim().min(1).max(1200),
 });

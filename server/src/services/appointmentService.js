@@ -69,6 +69,37 @@ const localHourDecimal = (instant, timeZone) => {
 };
 
 /**
+ * An instant's local wall clock in a timezone, re-encoded as if those numbers were UTC.
+ *
+ * Not a real instant, and not meant to be one — it is a comparable number. Subtracting it
+ * from the UTC encoding of a wanted wall-clock time gives that zone's offset at that moment,
+ * including the calendar day, which is the part an hour-only reading cannot see.
+ */
+const localWallClockAsUtc = (instant, timeZone) => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(instant);
+
+  const value = (type) => Number(parts.find((part) => part.type === type)?.value ?? '0');
+
+  return Date.UTC(
+    value('year'),
+    value('month') - 1,
+    value('day'),
+    value('hour'),
+    value('minute'),
+    value('second'),
+  );
+};
+
+/**
  * Book an appointment.
  *
  * Confirms immediately: this prototype has no staff role, so a PENDING appointment would
@@ -359,16 +390,35 @@ export const getAvailability = async (caller, providerId, date) => {
  * Works by guessing UTC, measuring how far the guess lands from the intended local time in
  * the target zone, and correcting. Two passes settle it even across a DST boundary, where
  * the offset itself depends on the instant.
+ *
+ * Both details below are corrections to an earlier version that compared only the hour:
+ *
+ * The whole local date-time is compared, not the hour alone. An hour-only comparison cannot
+ * see which local *day* the guess landed on, so it happily settled on the right o'clock on the
+ * wrong date — a day early in Americas zones for early opening hours, a day late in Asian
+ * ones for late closing hours. Correct in UTC, which is why the fixtures never caught it.
+ *
+ * And hour 24 is normalised first. `close_hour` may be 24 — a clinic open until midnight —
+ * but no timezone reports an hour of 24, so the correction measured a drift of -24 against it
+ * and pushed the guess a full day forward on each pass. A midnight close came back three days
+ * late, and every "free slot" after it belonged to another day.
  */
 const zonedWallClockToUtc = (isoDate, hour, timeZone) => {
   const [year, month, day] = isoDate.split('-').map(Number);
-  let guess = Date.UTC(year, (month ?? 1) - 1, day ?? 1, hour, 0, 0);
+
+  // Midnight at the end of a day is midnight at the start of the next one — a real hour, on a
+  // real date, which is what the loop below needs.
+  const dayOffset = Math.floor(hour / 24);
+  const target = Date.UTC(year, (month ?? 1) - 1, (day ?? 1) + dayOffset, hour - dayOffset * 24);
+
+  let guess = target;
 
   for (let pass = 0; pass < 2; pass += 1) {
-    const actual = localHourDecimal(new Date(guess), timeZone);
-    const driftHours = actual - hour;
-    if (Math.abs(driftHours) < 1 / 120) break; // within 30 seconds
-    guess -= driftHours * 3_600_000;
+    // The guess's local wall clock, read back as though those numbers were UTC. Its distance
+    // from the target is exactly the zone offset to remove.
+    const driftMs = localWallClockAsUtc(new Date(guess), timeZone) - target;
+    if (Math.abs(driftMs) < 30_000) break;
+    guess -= driftMs;
   }
 
   return new Date(guess);

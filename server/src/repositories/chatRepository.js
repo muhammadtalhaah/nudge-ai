@@ -2,6 +2,8 @@
  * Chat session and message persistence.
  */
 
+import { REPLY_KIND } from '../../../shared/constants.js';
+
 const toSession = (row) => ({
   id: row.id,
   businessId: row.business_id,
@@ -146,6 +148,56 @@ export const findLastReplyKind = async (executor, sessionId) => {
   return rows[0]?.kind ?? null;
 };
 
+/**
+ * What the conversation has already established about the booking under discussion.
+ *
+ * Derived from the last reply that carried one, rather than stored in a column of its own.
+ * The reply payload is already persisted so the UI can replay a conversation, and a second
+ * copy of the same facts would only be somewhere for the two to disagree.
+ *
+ * Any reply kind that prefills something contributes — the booking form and a list of free
+ * slots settle exactly the same kind of fact, and a slot list is how "and Friday?" keeps hold
+ * of whose Friday. Two rules then make it correct:
+ *
+ *   A completed booking ends the draft. Without that, the details of the appointment someone
+ *   just booked linger, and the next vague message books it again.
+ *
+ *   Fields the reply itself named in `missing` are dropped. That single line is what makes a
+ *   refused slot forget the time while keeping the doctor: when `book` fails on "that slot is
+ *   taken", the fallback prefills the time the user tried — so they can see and amend it —
+ *   but lists it as missing, which is the reply saying that value is not settled.
+ *
+ * @returns {Promise<import('../../../shared/chat.js').BookingFormPrefill>} Empty when there
+ *   is nothing in progress.
+ */
+export const findBookingDraft = async (executor, sessionId) => {
+  const { rows } = await executor.query(
+    `SELECT extracted_data AS reply
+       FROM chat_messages
+      WHERE session_id = $1
+        AND role = 'assistant'
+        AND extracted_data->>'kind' = ANY($2)
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [sessionId, [REPLY_KIND.FORM_FALLBACK, REPLY_KIND.SLOT_LIST, REPLY_KIND.APPOINTMENT_CREATED]],
+  );
+
+  const reply = rows[0]?.reply;
+  if (!reply || reply.kind === REPLY_KIND.APPOINTMENT_CREATED) return {};
+
+  const settled = Array.isArray(reply.missing) ? reply.missing : [];
+  const prefill = reply.prefill ?? {};
+  const keep = (field, value) => (settled.includes(field) ? null : (value ?? null));
+
+  return {
+    providerId: keep('providerName', prefill.providerId),
+    specialty: keep('specialty', prefill.specialty),
+    date: keep('date', prefill.date),
+    time: keep('time', prefill.time),
+    notes: prefill.notes ?? null,
+  };
+};
+
 /** Derived from the first user message so the session list is scannable. */
 export const setTitleIfEmpty = async (executor, sessionId, title) => {
   await executor.query('UPDATE chat_sessions SET title = $2 WHERE id = $1 AND title IS NULL', [
@@ -162,5 +214,6 @@ export default {
   listMessages,
   listRecentTurns,
   findLastReplyKind,
+  findBookingDraft,
   setTitleIfEmpty,
 };

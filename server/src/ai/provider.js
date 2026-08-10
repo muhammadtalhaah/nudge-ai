@@ -36,6 +36,16 @@
  *   on Thursday"). The deterministic provider cannot read prose, so it is given the fact
  *   directly — without it, a completed booking's date and doctor linger in its context and
  *   the next unrecognised message re-attempts the same booking.
+ * @property {import('../../../shared/chat.js').BookingFormPrefill & { providerName?: string | null }} draft
+ *   The booking already under way in this conversation, or an empty object.
+ *
+ *   Session state, not model state: it is read from what the assistant last told the user,
+ *   so it survives a provider outage, a malformed completion, and a page reload. The model is
+ *   shown it so it stops asking for details it has, and the service merges it back over the
+ *   model's own fields so a turn that forgets one cannot cost the user their answer.
+ *
+ *   Carries `providerName` for the prompt, since a doctor's id means nothing to a model, and
+ *   `providerId` for the service, which resolves against real rows.
  */
 
 /**

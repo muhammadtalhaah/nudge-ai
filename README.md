@@ -119,11 +119,21 @@ user message
     ├─ persisted first  ── so a provider outage cannot lose what they typed
     │
     ├─ last N turns loaded as context (simple memory, no vector store)
+    │  + the booking draft: what earlier turns already settled
     │
     ├─ provider.complete()  ──►  Mistral  |  offline stub
     │                             both return the SAME JSON contract
     │
     ├─ Zod validation  ──►  fails?  ──►  FORM FALLBACK
+    │
+    ├─ intent?
+    │    list         → the caller's own appointments
+    │    providers    → the clinic's doctors, as cards from real rows
+    │    availability → free slots, computed from business hours minus real bookings
+    │    cancel       → the list, so a human clicks the specific record
+    │    book         → below
+    │
+    ├─ merge the draft under this turn's fields (the newest answer wins)
     │
     ├─ resolve "Dr. Okafor" / "Dermatology" against real provider rows
     │       unknown → form fallback     ambiguous → offer a choice
@@ -134,11 +144,29 @@ user message
     └─ every outcome logged to ai_interaction_logs
 ```
 
+**Three of those intents are "show me a list", and they are different lists.** They were one
+intent once, and "list all the doctors" was answered with "you have no upcoming appointments" —
+true, and about a question nobody asked. Splitting them is what lets each reach its own data.
+The model classifies; the server decides what that means and fetches it, so the doctors are
+real rows and the free times come from the calendar rather than from a sentence the model
+composed. It is told, in as many words, never to claim a time is free.
+
 **The fallback is the feature.** When extraction is incomplete or ambiguous, the reply carries
 a `form_fallback` payload with whatever _was_ understood, and the client renders the booking
 form prefilled with those values and the missing fields marked. Say "I have an itchy rash" and
 you get a form with Dermatology and Dr. Okafor already chosen, and Date/Time flagged as still
 needed. The user finishes in two clicks instead of retyping.
+
+**The conversation is the unit of work, not the message.** A model reads one turn at a time
+and will happily drop a detail it was told two turns ago, so the booking under discussion is
+held by the session rather than by the model. It is recovered from the reply the user was last
+shown — the payload already persisted for conversation replay, so there is no second copy to
+disagree with it — and it is used twice: stated in the prompt, so the assistant stops asking
+for things it has, and merged back under whatever the model returns, so a turn that forgets
+the doctor cannot cost the user their answer. The current turn always wins, which is what
+makes "actually, make it Thursday" work. Two details matter: a completed booking ends the
+draft (otherwise "thanks" books the same slot twice), and a value the clinic refused is
+dropped while the rest survives — a taken 10:00 forgets the time and keeps the doctor.
 
 Conversations are listed in the sidebar and selected **by URL** (`/chat?session=<id>`), so switching threads, reloading, and sharing a link all reopen the same conversation — including its stored rich payloads.
 
@@ -392,7 +420,7 @@ Chromium. `scripts/browserSmoke.mjs` therefore drives the system Google Chrome v
 
 ```bash
 npm test                       # everything
-npm test --workspace server    # 127 tests, integration ones against real Postgres
+npm test --workspace server    # 130 tests, integration ones against real Postgres
 npm test --workspace client    # 34 component/unit tests in jsdom
 ```
 

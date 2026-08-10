@@ -14,7 +14,7 @@ import BookingForm from '@/components/shared/BookingForm';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { formatDateTime } from '@/utils/formatDate';
+import { formatDateTime, formatTime } from '@/utils/formatDate';
 
 const ProviderOptions = ({ providers }) => (
   <ul className="mt-3 grid gap-2">
@@ -24,6 +24,26 @@ const ProviderOptions = ({ providers }) => (
         <p className="text-muted-foreground text-xs">
           {provider.specialty} · {provider.slotDurationMinutes} min appointments
         </p>
+      </li>
+    ))}
+  </ul>
+);
+
+/**
+ * Free start times for one doctor on one day.
+ *
+ * The server sends instants, not "10:00", so these are formatted here in the viewer's own
+ * timezone — the same rule the appointment cards follow, and the reason no time appears in
+ * the assistant's prose above them.
+ */
+const SlotList = ({ slots }) => (
+  <ul className="mt-3 flex flex-wrap gap-1.5">
+    {slots.map((slot) => (
+      <li
+        key={slot}
+        className="bg-background/60 rounded-md border px-2 py-1 font-mono text-xs tabular-nums"
+      >
+        {formatTime(slot)}
       </li>
     ))}
   </ul>
@@ -110,6 +130,13 @@ const ChatMessage = ({ message, onBooked }) => {
             {reply.kind === 'appointment_list' && reply.appointments ? (
               <AppointmentList appointments={reply.appointments} />
             ) : null}
+
+            {reply.kind === 'provider_list' && reply.providers ? (
+              <ProviderOptions providers={reply.providers} />
+            ) : null}
+
+            {/* Free times, read off the real calendar rather than claimed by the model. */}
+            {reply.kind === 'slot_list' && reply.slots ? <SlotList slots={reply.slots} /> : null}
 
             {reply.kind === 'form_fallback' ? (
               <Card className="mt-3">

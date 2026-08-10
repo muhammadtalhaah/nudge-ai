@@ -42,6 +42,36 @@ const fakeProvider = (raw) => ({
   },
 });
 
+/**
+ * A provider that answers each turn from a script, and remembers what it was asked.
+ *
+ * One canned response cannot test any of this: the question in every case below is what the
+ * *second* turn does with what the first one established, and the recorded requests are how
+ * the prompt's half of that is checked.
+ *
+ * @param {...string} responses Raw completions, one per turn; the last one repeats.
+ */
+const scriptedProvider = (...responses) => {
+  const requests = [];
+  let turn = 0;
+
+  return {
+    requests,
+    /** @type {import('../ai/provider.js').AiProvider} */
+    provider: {
+      name: 'stub',
+      isDeterministic: false,
+      supportsStreaming: false,
+      complete: async (request) => {
+        requests.push(request);
+        const raw = responses[Math.min(turn, responses.length - 1)];
+        turn += 1;
+        return { raw, model: 'fake-model', promptTokens: 10, completionTokens: 5 };
+      },
+    },
+  };
+};
+
 const extraction = (overrides = {}) =>
   JSON.stringify({
     intent: 'book',
@@ -50,6 +80,9 @@ const extraction = (overrides = {}) =>
     reply: 'Sure.',
     ...overrides,
   });
+
+/** A booking turn that understood nothing new — what a bare "yes" or "sure" extracts to. */
+const emptyBookingTurn = (reply) => extraction({ reply });
 
 const registerUser = async (email) => {
   const response = await request(app)
@@ -198,6 +231,516 @@ describe('conversational booking', () => {
   });
 });
 
+/**
+ * Three questions that all look like "show me a list".
+ *
+ * They were one intent once, and every one of them answered "you have no upcoming
+ * appointments" — true, and about a question nobody asked. What matters here is that each
+ * reaches its own data, and that the two that read the calendar read the *real* one.
+ */
+describe('listing doctors, appointments and free times', () => {
+  it('lists the clinic’s doctors, not the caller’s appointments', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'providers',
+          reply: 'We have Dr. Northsidehealth Generalist and Dr. Northsidehealth Dermatologist.',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'show me the list of all available doctors',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('provider_list');
+    expect(reply.providers.map((provider) => provider.fullName).sort()).toEqual(
+      [tenant.providerName, tenant.otherProviderName].sort(),
+    );
+    // The cards come from real rows, so they carry the real slot length.
+    expect(reply.providers[0].slotDurationMinutes).toBe(30);
+  });
+
+  it('offers free times that exclude what is already booked', async () => {
+    const date = tomorrow();
+
+    await request(app)
+      .post('/api/appointments')
+      .set({ Authorization: `Bearer ${otherAccessToken}` })
+      .send({ providerId: tenant.providerId, startsAt: `${date}T10:00:00.000Z` })
+      .expect(201);
+
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: tenant.providerName,
+            date,
+            time: null,
+            notes: null,
+          },
+          reply: 'Here is what is free.',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what is free tomorrow?',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('slot_list');
+    expect(reply.slotDate).toBe(date);
+    expect(reply.slots.length).toBeGreaterThan(0);
+    // The taken slot is absent; the one after it is not.
+    expect(reply.slots).not.toContain(`${date}T10:00:00.000Z`);
+    expect(reply.slots).toContain(`${date}T10:30:00.000Z`);
+  });
+
+  it('asks which doctor before reading a calendar it cannot pick', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: null,
+            date: tomorrow(),
+            time: null,
+            notes: null,
+          },
+          reply: 'Happy to check.',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'i want to see the available slots',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('form_fallback');
+    expect(reply.missing).toEqual(['providerName']);
+    expect(reply.providers).toHaveLength(2);
+  });
+
+  it('asks which day rather than reusing the last one it was shown', async () => {
+    const script = scriptedProvider(
+      extraction({
+        intent: 'availability',
+        fields: {
+          specialty: null,
+          providerName: tenant.providerName,
+          date: tomorrow(),
+          time: null,
+          notes: null,
+        },
+        reply: 'Here is what is free.',
+      }),
+      /*
+       * "and what about Friday?" — what Mistral actually returns for it: the new day named in
+       * the prose, and no date in the fields. Answering with the previous day's real times
+       * under that sentence would be worse than asking.
+       */
+      extraction({
+        intent: 'availability',
+        fields: {
+          specialty: null,
+          providerName: tenant.providerName,
+          date: null,
+          time: null,
+          notes: null,
+        },
+        reply: "Let me check Friday's availability.",
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'when is the GP free tomorrow?').expect(201);
+    const response = await say(accessToken, sessionId, 'and what about friday?').expect(201);
+
+    const { reply } = response.body.data;
+    expect(reply.kind).toBe('form_fallback');
+    expect(reply.missing).toEqual(['date']);
+    // The doctor was never in question and is not asked for again.
+    expect(reply.prefill.providerId).toBe(tenant.providerId);
+  });
+
+  it('carries the doctor from a slot list into the booking that follows', async () => {
+    const date = tomorrow();
+
+    const script = scriptedProvider(
+      extraction({
+        intent: 'availability',
+        fields: {
+          specialty: null,
+          providerName: tenant.providerName,
+          date,
+          time: null,
+          notes: null,
+        },
+        reply: 'Here is what is free.',
+      }),
+      // They pick one of the times they were shown, and say nothing else.
+      extraction({
+        fields: { specialty: null, providerName: null, date: null, time: '11:00', notes: null },
+        reply: "I'll get that booked.",
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'when is the GP free tomorrow?').expect(201);
+    const response = await say(accessToken, sessionId, '11am please').expect(201);
+
+    const { reply } = response.body.data;
+    expect(reply.kind).toBe('appointment_created');
+    expect(reply.appointment.providerName).toBe(tenant.providerName);
+    expect(reply.appointment.startsAt).toBe(`${date}T11:00:00.000Z`);
+  });
+
+  it('says so when a day has nothing left, and keeps the doctor', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: tenant.providerName,
+            // Yesterday has no slots left by construction — every one of them is in the past.
+            date: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10),
+            time: null,
+            notes: null,
+          },
+          reply: 'Let me look.',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what was free yesterday?',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('form_fallback');
+    expect(reply.text).toMatch(/nothing free/i);
+    expect(reply.prefill.providerId).toBe(tenant.providerId);
+    // The day is what did not work, so it is the only thing asked for again.
+    expect(reply.missing).toEqual(['date']);
+    expect(reply.prefill.date).toBeNull();
+  });
+
+  it('still answers "my appointments" with the caller’s own', async () => {
+    setProviderForTesting(fakeProvider(extraction({ intent: 'list', reply: 'Here they are.' })));
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what have I got booked?',
+    ).expect(201);
+
+    expect(response.body.data.reply.kind).toBe('appointment_list');
+    expect(response.body.data.reply.text).toMatch(/no upcoming appointments/i);
+  });
+
+  /**
+   * What Mistral actually returns for a question with nothing to extract. The keys were
+   * required once, so this exact shape — a correct answer, tersely phrased — was rejected as
+   * malformed and the person got a booking form instead of their appointments.
+   */
+  it('accepts a terse answer that omits the fields it has nothing for', async () => {
+    setProviderForTesting(
+      fakeProvider(JSON.stringify({ intent: 'list', fields: {}, reply: 'Here they are.' })),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what have I got booked?',
+    ).expect(201);
+
+    expect(response.body.data.reply.kind).toBe('appointment_list');
+  });
+});
+
+/**
+ * The conversation is the unit of work, not the message.
+ *
+ * A model reads a turn at a time and will drop a detail it was told two turns ago, so what
+ * the assistant "already knows" is held by the session — recovered from the reply the user
+ * was last shown — and folded back over whatever the model returns. These tests are the
+ * rules that state is allowed to follow, and every one of them was a way to get it wrong:
+ * losing a detail, asking for it twice, or remembering one that should have been forgotten.
+ */
+describe('the conversation carries its own context', () => {
+  it('finishes a booking from a turn that supplies only what was missing', async () => {
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'Dermatology',
+          providerName: null,
+          date: null,
+          time: null,
+          notes: 'rash',
+        },
+        missing: ['date', 'time'],
+        reply: 'Which day suits you?',
+      }),
+      // As people actually answer that question: a day and a time, nothing else.
+      extraction({
+        fields: {
+          specialty: null,
+          providerName: null,
+          date: tomorrow(),
+          time: '14:00',
+          notes: null,
+        },
+        reply: "I'll get that booked.",
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I have a rash').expect(201);
+    const response = await say(accessToken, sessionId, 'tomorrow at 2pm').expect(201);
+
+    const { reply } = response.body.data;
+    expect(reply.kind).toBe('appointment_created');
+    // The doctor and the reason both came from the turn before.
+    expect(reply.appointment.providerName).toBe(tenant.otherProviderName);
+
+    const { rows } = await pool.query('SELECT notes FROM appointments');
+    expect(rows[0].notes).toBe('rash');
+  });
+
+  it('tells the model what has already been settled, so it stops asking', async () => {
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'Dermatology',
+          providerName: null,
+          date: null,
+          time: null,
+          notes: null,
+        },
+        missing: ['date', 'time'],
+        reply: 'Which day suits you?',
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I have a rash').expect(201);
+    await say(accessToken, sessionId, 'what were we saying?').expect(201);
+
+    const [first, second] = script.requests.map((request) => request.systemPrompt);
+
+    // Nothing to carry on the opening turn.
+    expect(first).toMatch(/no booking is in progress/);
+
+    // On the next one, the doctor resolved from the first turn is stated as known, and the
+    // model is told what its previous reply actually was — a fact it cannot read off prose.
+    expect(second).toContain(tenant.otherProviderName);
+    expect(second).toContain('Dermatology');
+    expect(second).toMatch(/showed a form/);
+  });
+
+  it('re-attempts nothing after a booking completes', async () => {
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'General Practice',
+          providerName: tenant.providerName,
+          date: tomorrow(),
+          time: '10:00',
+          notes: null,
+        },
+        reply: "I'll get that booked.",
+      }),
+      // A vague follow-up. The details of the appointment just made must not still be lying
+      // around for it to pick up, or "thanks" books a second identical slot.
+      emptyBookingTurn('What else can I help with?'),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'GP tomorrow at 10').expect(201);
+    const response = await say(accessToken, sessionId, 'thanks').expect(201);
+
+    expect(response.body.data.reply.kind).toBe('form_fallback');
+
+    const { rows } = await pool.query('SELECT count(*)::text AS count FROM appointments');
+    expect(rows[0].count).toBe('1');
+  });
+
+  it('forgets a time the clinic refused, but keeps the doctor', async () => {
+    const date = tomorrow();
+
+    // Someone else already holds 10:00.
+    await request(app)
+      .post('/api/appointments')
+      .set({ Authorization: `Bearer ${otherAccessToken}` })
+      .send({ providerId: tenant.providerId, startsAt: `${date}T10:00:00.000Z` })
+      .expect(201);
+
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'General Practice',
+          providerName: tenant.providerName,
+          date,
+          time: '10:00',
+          notes: null,
+        },
+        reply: "I'll get that booked.",
+      }),
+      emptyBookingTurn('Sorry — which time would you like instead?'),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    const refused = await say(accessToken, sessionId, 'GP tomorrow at 10').expect(201);
+    expect(refused.body.data.reply.kind).toBe('form_fallback');
+
+    // A turn that adds nothing must not retry the slot that was just refused — but the
+    // doctor was never the problem, so it is still there and is not asked for again.
+    const response = await say(accessToken, sessionId, 'ok').expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('form_fallback');
+    expect(reply.prefill.providerId).toBe(tenant.providerId);
+    expect(reply.missing).toEqual(['date', 'time']);
+
+    const { rows } = await pool.query('SELECT count(*)::text AS count FROM appointments');
+    expect(rows[0].count).toBe('1');
+  });
+
+  it('drops a doctor chosen earlier when the specialty changes', async () => {
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'General Practice',
+          providerName: tenant.providerName,
+          date: null,
+          time: null,
+          notes: null,
+        },
+        missing: ['date', 'time'],
+        reply: 'Which day suits you?',
+      }),
+      // They have changed their mind about what this is for, and named no doctor. Carrying
+      // the GP forward here would book the wrong person rather than merely ask a clumsy
+      // question.
+      extraction({
+        fields: {
+          specialty: 'Dermatology',
+          providerName: null,
+          date: tomorrow(),
+          time: '09:00',
+          notes: null,
+        },
+        reply: "I'll get that booked.",
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I need to see a GP').expect(201);
+    const response = await say(accessToken, sessionId, "actually it's about my skin").expect(201);
+
+    expect(response.body.data.reply.kind).toBe('appointment_created');
+    expect(response.body.data.reply.appointment.providerName).toBe(tenant.otherProviderName);
+  });
+
+  it('holds on to a doctor whose name contains another doctor’s', async () => {
+    // The reason the draft carries a provider id and not a provider name. Resolving
+    // "Dr. Ada Chen" by name matches Chenoweth too, so a conversation that carried the name
+    // forward would keep re-asking which of them was meant.
+    await pool.query(
+      `INSERT INTO providers (business_id, full_name, specialty, slot_duration_minutes)
+       VALUES ($1, 'Dr. Ada Chen', 'Cardiology', 30),
+              ($1, 'Dr. Ada Chenoweth', 'Rheumatology', 30)`,
+      [tenant.businessId],
+    );
+
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'Cardiology',
+          providerName: null,
+          date: null,
+          time: null,
+          notes: null,
+        },
+        missing: ['date', 'time'],
+        reply: 'Which day suits you?',
+      }),
+      extraction({
+        fields: {
+          specialty: null,
+          providerName: null,
+          date: tomorrow(),
+          time: '11:00',
+          notes: null,
+        },
+        reply: "I'll get that booked.",
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I need a cardiologist').expect(201);
+    const response = await say(accessToken, sessionId, 'tomorrow at 11').expect(201);
+
+    expect(response.body.data.reply.kind).toBe('appointment_created');
+    expect(response.body.data.reply.appointment.providerName).toBe('Dr. Ada Chen');
+  });
+
+  it('keeps one conversation out of another', async () => {
+    const script = scriptedProvider(
+      extraction({
+        fields: {
+          specialty: 'Dermatology',
+          providerName: null,
+          date: null,
+          time: null,
+          notes: null,
+        },
+        missing: ['date', 'time'],
+        reply: 'Which day suits you?',
+      }),
+      emptyBookingTurn('What can I help with?'),
+    );
+    setProviderForTesting(script.provider);
+
+    await say(accessToken, await newSession(accessToken), 'I have a rash').expect(201);
+
+    // A fresh session starts empty, however much the previous one settled.
+    const response = await say(accessToken, await newSession(accessToken), 'hello').expect(201);
+
+    expect(response.body.data.reply.prefill).toEqual({
+      specialty: null,
+      providerId: null,
+      date: null,
+      time: null,
+      notes: null,
+    });
+    expect(script.requests[1].systemPrompt).toMatch(/no booking is in progress/);
+  });
+});
+
 describe('model misbehaviour degrades to the form', () => {
   const badResponses = [
     ['plain prose instead of JSON', 'Sure! I have booked you in for tomorrow at 10.'],
@@ -206,9 +749,9 @@ describe('model misbehaviour degrades to the form', () => {
       'an intent that does not exist',
       JSON.stringify({ intent: 'wire_transfer', fields: {}, missing: [], reply: 'ok' }),
     ],
-    ['a missing fields object', JSON.stringify({ intent: 'book', missing: [], reply: 'ok' })],
     ['a JSON array', '[]'],
     ['an empty object', '{}'],
+    ['no reply prose to show anyone', JSON.stringify({ intent: 'book', fields: {}, missing: [] })],
     // A literal name here on purpose: this array is built at collection time, before
     // beforeEach assigns `tenant`. The date is rejected by the schema regardless of the name.
     [

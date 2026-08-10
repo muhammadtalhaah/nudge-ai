@@ -136,6 +136,54 @@ guessed at, because silently picking one of three matching doctors is worse than
 call could not: business hours, past dates, inactive providers and double-booking are all
 enforced in one place regardless of which surface initiated it.
 
+### The intents are the questions, not the phrasing
+
+`list`, `providers` and `availability` are three separate intents because they are three
+separate questions that happen to sound alike. All of "list my appointments", "list all the
+doctors" and "list what's free on Thursday" are list-shaped, and when one intent covered them
+the server answered every one of them from the caller's own appointments — so asking about the
+clinic's doctors returned "you have no upcoming appointments". A true sentence, and a non-answer.
+
+The taxonomy is the fix, but the reason it is safe is that the model only ever classifies. It
+does not fetch: doctors come from provider rows and free slots from `getAvailability`, which
+generates them from business hours minus real bookings. The prompt forbids the model from
+naming a free time in its own words for exactly this reason — the sentence is its work, the
+times underneath it are not.
+
+`availability` also refuses one inheritance the booking flow allows. A day is the _subject_ of
+an availability question, so the draft's date is dropped before the merge: asked "and what
+about Friday?", Mistral names Friday in its prose and leaves the field null, and inheriting
+Thursday there would show real times for a day nobody asked about, under a sentence naming
+another one. Asking which day costs a turn; the alternative is confidently wrong.
+
+### Conversation state lives in the session, not the model
+
+Replaying the transcript is not the same as remembering. A model reads a turn at a time, and one
+that is asked to re-derive a whole booking from ten turns of chat will eventually drop a field
+and ask for it twice — which reads, to the person typing, as an assistant that was not listening.
+
+So the booking under discussion is a server fact. `findBookingDraft` reads it from the last reply
+the user was actually shown, which is already persisted so conversations can be replayed; deriving
+it rather than storing it separately means there is no second copy to fall out of step. Two rules
+make it correct, and both were bugs first:
+
+- **A completed booking ends the draft.** Otherwise the details of the appointment just made are
+  still lying around, and the next vague message books it again.
+- **A field the reply listed in `missing` is dropped.** When `book` is refused, the fallback
+  prefills the time that failed — so the person can see and amend it — but names it missing. That
+  one line is what makes a taken 10:00 forget the time and keep the doctor.
+
+The draft is used on both sides of the model. The prompt states it, so the assistant stops asking
+for what it has and can act on a bare "yes". `mergeDraft` folds it back under the returned fields,
+so a turn that forgets the doctor still books with them. The current turn always wins — that is
+what makes "actually, make it Thursday" work, and why the merge only ever fills nulls. Its one
+exception is a changed specialty retiring the doctor chosen under the old one, which is the
+difference between a clumsy question and a wrong booking.
+
+None of this is trust. The merged fields are still resolved against real provider rows and still
+booked through `appointmentService`; the draft can only ever re-supply a value the user themselves
+gave earlier in the same session.
+
 ### Why the offline provider exists
 
 Selected automatically when `MISTRAL_API_KEY` is absent. It matters for three reasons:
@@ -147,11 +195,14 @@ Selected automatically when `MISTRAL_API_KEY` is absent. It matters for three re
 3. **It is honest.** `isDeterministic: true` propagates to `reply.degraded`, and the UI says so
    rather than passing a keyword matcher off as a language model.
 
-Its known weakness is multi-turn state. It resolves the newest statement about each field and
-only falls back to recent turns for gaps — which is a heuristic. The `lastReplyKind` signal
-exists because of a real bug: after a completed booking, stale details lingered in its context
-and the next vague message re-attempted the same booking. A real model infers this from the
-prose it can see; the stub has to be told.
+Its known weakness is language, and it is not a weakness worth fixing. It matches keywords, so a
+plural it was not taught ("appointments"), a question it has no rule for ("any other doctors?"),
+and a bare "sure" all fall through to "could you rephrase that?" — the difference between a
+regex and a model, showing exactly where you would expect it. `reply.degraded` says so in the UI.
+Multi-turn state is the one part it does not have to get right on its own: the session's booking
+draft is merged in above the provider boundary, so the stub inherits it like the model does. The
+`lastReplyKind` signal is still passed to it directly, because a completed booking has to stop its
+own history scan from re-attempting the same slot, and it cannot read the prose that would say so.
 
 ### Prompt injection
 
@@ -215,12 +266,12 @@ high throughput this is the thing to cache with a short TTL — not to remove.
 
 **State ownership** is split deliberately:
 
-| Kind          | Where                           | Why                                                                                    |
-| ------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| Server data   | TanStack Query                  | Caching, retries, invalidation                                                         |
-| Auth + theme  | Context                         | Genuinely global, changes rarely                                                       |
-| Chat messages | Local state in `useChatSession` | Arrive by push, append-only — a request/response cache would be fighting the transport |
-| Filters, which conversation is open | URL query params | Survives refresh, shareable as a link — and lets the sidebar switch threads by navigation rather than reaching into the chat page's state |
+| Kind                                | Where                           | Why                                                                                                                                       |
+| ----------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Server data                         | TanStack Query                  | Caching, retries, invalidation                                                                                                            |
+| Auth + theme                        | Context                         | Genuinely global, changes rarely                                                                                                          |
+| Chat messages                       | Local state in `useChatSession` | Arrive by push, append-only — a request/response cache would be fighting the transport                                                    |
+| Filters, which conversation is open | URL query params                | Survives refresh, shareable as a link — and lets the sidebar switch threads by navigation rather than reaching into the chat page's state |
 
 **Invalidation is the mechanism that keeps views consistent.** A booking made in the chat
 invalidates `queryKeys.appointments.all`, and the appointments page refetches — neither knows

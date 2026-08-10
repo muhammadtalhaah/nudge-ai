@@ -371,4 +371,28 @@ describe('availability', () => {
 
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
   });
+
+  /**
+   * The fixture clinic is open 00:00–24:00 in UTC, which is exactly the shape that used to
+   * break: hour 24 is not a wall-clock hour any zone reports, so correcting a guess against
+   * it walked the end of the day forward until the window spanned three days.
+   */
+  it('keeps every slot inside the day that was asked for', async () => {
+    const date = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const response = await request(app)
+      .get(`/api/appointments/availability?providerId=${tenant.providerId}&date=${date}`)
+      .set(authorise(accessToken))
+      .expect(200);
+
+    const { slots } = response.body.data;
+    expect(slots.length).toBeGreaterThan(0);
+
+    for (const slot of slots) {
+      expect(slot.slice(0, 10)).toBe(date);
+    }
+
+    // Open round the clock at 30-minute slots: a full day is 48 of them, not 96 or 144.
+    expect(slots).toHaveLength(48);
+  });
 });

@@ -50,11 +50,24 @@ export const CHAT_ROLES = {
 
 export const CHAT_ROLE_VALUES = Object.values(CHAT_ROLES);
 
-/** Intents the extraction step may return. Deliberately small. */
+/**
+ * Intents the extraction step may return. Deliberately small.
+ *
+ * `LIST` is the person's own appointments and nothing else. That narrowness is the whole
+ * reason `PROVIDERS` and `AVAILABILITY` exist as intents of their own: "list the doctors" and
+ * "show me what's free" are also list-shaped questions, and folding them into `LIST` answered
+ * every one of them with "you have no upcoming appointments" — a true sentence about a
+ * question nobody asked.
+ */
 export const CHAT_INTENTS = {
   BOOK: 'book',
   CANCEL: 'cancel',
+  /** The caller's own upcoming appointments. */
   LIST: 'list',
+  /** Who works here, and what they treat. */
+  PROVIDERS: 'providers',
+  /** Free times for a doctor on a day. */
+  AVAILABILITY: 'availability',
   GREETING: 'greeting',
   OTHER: 'other',
 };
@@ -74,6 +87,10 @@ export const REPLY_KIND = {
   FORM_FALLBACK: 'form_fallback',
   APPOINTMENT_CREATED: 'appointment_created',
   APPOINTMENT_LIST: 'appointment_list',
+  /** The clinic's doctors, as cards rather than a sentence the model composed. */
+  PROVIDER_LIST: 'provider_list',
+  /** Free start times for one doctor on one day, computed from real bookings. */
+  SLOT_LIST: 'slot_list',
 };
 
 export const SOCKET_EVENTS = {

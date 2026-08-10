@@ -15,7 +15,7 @@
  * gets the structured form.
  */
 
-import { CHAT_INTENTS, CHAT_ROLES, REPLY_KIND } from '../../../shared/constants.js';
+import { BOOKING_FIELDS, CHAT_INTENTS, CHAT_ROLES, REPLY_KIND } from '../../../shared/constants.js';
 
 import { extract, getProvider } from '../ai/extraction.js';
 import { zonedDateTimeToUtc } from '../ai/naturalDate.js';
@@ -135,6 +135,14 @@ export const getMessages = async (caller, sessionId) => {
  *   | { status: 'unknown' }>}
  */
 const resolveProvider = async (businessId, fields) => {
+  // A doctor the conversation already settled on. Preferred over re-matching the name,
+  // because this id came from a real row in this tenant — and it is still re-read here rather
+  // than trusted, so a provider deactivated since that turn drops out like any other.
+  if (fields.providerId && !fields.providerName) {
+    const known = await providerRepository.findById(pool, businessId, fields.providerId);
+    if (known?.isActive) return { status: 'resolved', provider: known };
+  }
+
   if (fields.providerName) {
     const byName = await providerRepository.findByNameLike(pool, businessId, fields.providerName);
     if (byName.length === 1) return { status: 'resolved', provider: byName[0] };
@@ -148,6 +156,70 @@ const resolveProvider = async (businessId, fields) => {
   }
 
   return { status: 'unknown' };
+};
+
+/** @returns {import('../../../shared/chat.js').ChatProviderSummary} */
+const toProviderSummary = (provider) => ({
+  id: provider.id,
+  fullName: provider.fullName,
+  specialty: provider.specialty,
+  slotDurationMinutes: provider.slotDurationMinutes,
+});
+
+/** Every bookable doctor, as the client renders them. */
+const listProviderSummaries = async (businessId) => {
+  const providers = await providerRepository.listActive(pool, businessId);
+  return providers.map(toProviderSummary);
+};
+
+/**
+ * Fold the conversation's booking draft under this turn's extraction.
+ *
+ * The model is asked to repeat what it already knows, and mostly does. This is what happens
+ * when it does not: the draft supplies the gap, so "make it 3pm instead" does not throw away
+ * the doctor chosen two turns ago, and a model that returns nothing but an intent still
+ * advances the booking rather than restarting it.
+ *
+ * The current turn always wins. Anything the person just said overwrites the draft, which is
+ * what makes correcting yourself work — and it is why the merge only ever fills nulls.
+ *
+ * There is one exception to that, and it is the only place this function is not simply a fill:
+ * a new specialty retires the doctor chosen under the old one. Keeping both would let
+ * "actually it's about my skin" resolve to the cardiologist named two turns ago, which is a
+ * wrong booking rather than a clumsy question.
+ *
+ * @param {import('../ai/provider.js').CompletionContext['draft']} draft
+ * @param {object} fields This turn's extracted fields.
+ */
+const mergeDraft = (draft, fields) => {
+  const changedSpecialty =
+    Boolean(fields.specialty) && Boolean(draft.specialty) && fields.specialty !== draft.specialty;
+
+  // Every key present and null rather than absent: this becomes the form's prefill, which is a
+  // contract with the client, and an absent key does not survive JSON the way a null does.
+  const merged = {
+    specialty: draft.specialty ?? null,
+    /**
+     * The draft contributes the id and never the name, which is what makes the precedence
+     * right: `providerName` after this merge is only ever what the model said *this* turn, so
+     * naming a doctor switches to them and saying nothing keeps the one already chosen.
+     *
+     * Carrying the name too would also send an exact full name back through a LIKE match —
+     * ambiguous the moment one doctor's name contains another's ("Dr. Chen", "Dr. Chenoweth"),
+     * and the person gets asked to make a choice they already made.
+     */
+    providerName: null,
+    providerId: changedSpecialty && !fields.providerName ? null : (draft.providerId ?? null),
+    date: draft.date ?? null,
+    time: draft.time ?? null,
+    notes: draft.notes ?? null,
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== null && value !== undefined && value !== '') merged[key] = value;
+  }
+
+  return merged;
 };
 
 /**
@@ -164,6 +236,95 @@ const formFallback = (text, prefill, missing, extras = {}) => ({
 });
 
 /**
+ * Answer "what is free on Thursday?" from the calendar.
+ *
+ * The one place the assistant reports availability, and it does not decide any of it: the
+ * slots come from `appointmentService.getAvailability`, generated from business hours minus
+ * real bookings. The model is told in its prompt never to claim a time is free, precisely so
+ * that the only free times a person is ever shown are these.
+ *
+ * A doctor and a day are both required, and neither is guessed. The draft supplies them when
+ * the conversation already has them, so "and what about Friday?" works.
+ *
+ * @param {import('./appointmentService.js').Caller} caller
+ * @param {object} extraction
+ * @param {import('../ai/provider.js').CompletionContext} context
+ * @returns {Promise<import('../../../shared/chat.js').ChatReply>}
+ */
+const actOnAvailability = async (caller, extraction, context) => {
+  /**
+   * The doctor carries over from the conversation; the day never does.
+   *
+   * A day is the *subject* of an availability question, not a detail of it — "and what about
+   * Friday?" is asking about a different day by definition. Mistral answers that one by
+   * writing Friday into its prose and leaving `date` null, and inheriting Thursday there
+   * produces the worst available outcome: a list of real times for a day nobody asked about,
+   * under a sentence naming another. Asking which day costs a turn and is never wrong.
+   */
+  const fields = mergeDraft({ ...context.draft, date: null }, extraction.fields);
+  const resolution = await resolveProvider(caller.businessId, fields);
+
+  const prefill = {
+    specialty: fields.specialty,
+    date: fields.date,
+    time: null,
+    notes: fields.notes,
+    providerId: resolution.status === 'resolved' ? resolution.provider.id : null,
+  };
+
+  // Availability is per-doctor, so "when are you free this week?" cannot be answered as
+  // asked. Showing the doctors is the useful half of the answer.
+  if (resolution.status !== 'resolved') {
+    return formFallback(
+      resolution.status === 'ambiguous'
+        ? 'Several of our doctors match that — whose availability would you like?'
+        : `${extraction.reply} Which doctor did you have in mind?`,
+      prefill,
+      ['providerName'],
+      {
+        providers:
+          resolution.status === 'ambiguous'
+            ? resolution.candidates.map(toProviderSummary)
+            : await listProviderSummaries(caller.businessId),
+      },
+    );
+  }
+
+  const provider = resolution.provider;
+
+  if (!fields.date) {
+    return formFallback(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
+      providers: [toProviderSummary(provider)],
+    });
+  }
+
+  const { slots } = await appointmentService.getAvailability(caller, provider.id, fields.date);
+
+  if (slots.length === 0) {
+    // The date is dropped from what carries forward — it is the part that did not work, and
+    // leaving it in would have the next vague turn ask about the same full day.
+    return formFallback(
+      `${provider.fullName} has nothing free that day. Would another day work?`,
+      { ...prefill, date: null },
+      ['date'],
+      { providers: [toProviderSummary(provider)] },
+    );
+  }
+
+  return {
+    kind: REPLY_KIND.SLOT_LIST,
+    text: extraction.reply,
+    slots,
+    slotDate: fields.date,
+    providers: [toProviderSummary(provider)],
+    // Carried so the conversation remembers whose day this was: naming one of these times is
+    // then a complete booking rather than an orphaned "10:00".
+    prefill,
+    missing: ['time'],
+  };
+};
+
+/**
  * Decide what a validated extraction actually means, and act on it.
  *
  * Returns the reply payload. Every branch that could book something goes through
@@ -178,7 +339,7 @@ const formFallback = (text, prefill, missing, extras = {}) => ({
  * @returns {Promise<import('../../../shared/chat.js').ChatReply>}
  */
 const actOnExtraction = async (caller, sessionId, extraction, context, timezone) => {
-  const { intent, fields } = extraction;
+  const { intent } = extraction;
 
   if (intent === CHAT_INTENTS.LIST) {
     const upcoming = await appointmentRepository.listUpcomingForUser(pool, caller.userId);
@@ -211,11 +372,31 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     };
   }
 
+  if (intent === CHAT_INTENTS.PROVIDERS) {
+    // The model has the catalogue in its prompt and answers this well in prose. The cards go
+    // alongside it anyway, because they are built from live rows: if the model drops a doctor
+    // or invents one, what the person sees under the sentence is still the truth.
+    return {
+      kind: REPLY_KIND.PROVIDER_LIST,
+      text: extraction.reply,
+      providers: await listProviderSummaries(caller.businessId),
+    };
+  }
+
+  if (intent === CHAT_INTENTS.AVAILABILITY) {
+    return actOnAvailability(caller, extraction, context);
+  }
+
   if (intent === CHAT_INTENTS.GREETING || intent === CHAT_INTENTS.OTHER) {
     return { kind: REPLY_KIND.MESSAGE, text: extraction.reply };
   }
 
   /* ------------------------------------------------------------------ booking ---- */
+
+  // The turn's own reading of the message, over everything the conversation had already
+  // settled. From here down, `fields` is the whole booking rather than one message's worth
+  // of it — which is why a "yes" that extracts nothing still books what was on offer.
+  const fields = mergeDraft(context.draft, extraction.fields);
 
   const resolution = await resolveProvider(caller.businessId, fields);
 
@@ -227,14 +408,30 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     providerId: resolution.status === 'resolved' ? resolution.provider.id : null,
   };
 
+  /**
+   * What is still genuinely absent, recomputed rather than taken from `extraction.missing`.
+   *
+   * The model reports what *this message* lacked; after the merge that is often already
+   * answered, and reporting it would ask someone for a detail sitting in the prefill next to
+   * the question. The recomputation is also what stops the draft from making `missing` and
+   * `prefill` contradict each other.
+   */
+  const stillMissing = BOOKING_FIELDS.filter((field) => {
+    // Choosing the doctor answers what the appointment is for — their specialty is the
+    // answer. Asking anyway is the kind of question that makes an assistant feel like a form.
+    if (field === 'providerName') return resolution.status !== 'resolved';
+    if (field === 'specialty') return resolution.status !== 'resolved' && !fields.specialty;
+    return !fields[field];
+  });
+
   if (resolution.status === 'unknown') {
     return formFallback(
       fields.specialty || fields.providerName
         ? `I could not match that to one of our doctors. ${extraction.reply}`
         : extraction.reply,
       prefill,
-      extraction.missing.length ? extraction.missing : ['specialty', 'providerName'],
-      { providers: context.providers.map((p) => ({ ...p, slotDurationMinutes: 30 })) },
+      stillMissing,
+      { providers: await listProviderSummaries(caller.businessId) },
     );
   }
 
@@ -243,32 +440,14 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
       'Several of our doctors match that — which would you prefer?',
       prefill,
       ['providerName'],
-      {
-        providers: resolution.candidates.map((candidate) => ({
-          id: candidate.id,
-          fullName: candidate.fullName,
-          specialty: candidate.specialty,
-          slotDurationMinutes: candidate.slotDurationMinutes,
-        })),
-      },
+      { providers: resolution.candidates.map(toProviderSummary) },
     );
   }
 
   // Provider is known; a date and time are still required.
   if (!fields.date || !fields.time) {
-    const missing = [];
-    if (!fields.date) missing.push('date');
-    if (!fields.time) missing.push('time');
-
-    return formFallback(extraction.reply, prefill, missing, {
-      providers: [
-        {
-          id: resolution.provider.id,
-          fullName: resolution.provider.fullName,
-          specialty: resolution.provider.specialty,
-          slotDurationMinutes: resolution.provider.slotDurationMinutes,
-        },
-      ],
+    return formFallback(extraction.reply, prefill, stillMissing, {
+      providers: [toProviderSummary(resolution.provider)],
     });
   }
 
@@ -310,14 +489,7 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     // form fallback carrying the user's own message back, so nothing they typed is lost.
     if (error instanceof AppError && error.statusCode < 500) {
       return formFallback(`${error.message} Try another time below.`, prefill, ['date', 'time'], {
-        providers: [
-          {
-            id: resolution.provider.id,
-            fullName: resolution.provider.fullName,
-            specialty: resolution.provider.specialty,
-            slotDurationMinutes: resolution.provider.slotDurationMinutes,
-          },
-        ],
+        providers: [toProviderSummary(resolution.provider)],
       });
     }
     throw error;
@@ -359,11 +531,12 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
   // assistant's prose cannot deliver the reply to another tab before the message it answers.
   notify(hooks.onUserMessage, userMessage);
 
-  const [providers, specialties, history, lastReplyKind] = await Promise.all([
+  const [providers, specialties, history, lastReplyKind, draft] = await Promise.all([
     providerRepository.listActive(pool, caller.businessId),
     providerRepository.listSpecialties(pool, caller.businessId),
     chatRepository.listRecentTurns(pool, session.id, env.AI_HISTORY_TURNS),
     chatRepository.findLastReplyKind(pool, session.id),
+    chatRepository.findBookingDraft(pool, session.id),
   ]);
 
   /** @type {import('../ai/provider.js').CompletionContext} */
@@ -377,6 +550,14 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
     todayIsoDate: businessToday(business.timezone),
     timezone: business.timezone,
     lastReplyKind,
+    // The draft stores a provider id, because that is what survives a doctor being renamed.
+    // The prompt needs a name, so it is resolved here against the live list — a doctor who
+    // has since been deactivated is simply absent from it, and the draft loses them.
+    draft: {
+      ...draft,
+      providerName:
+        providers.find((provider) => provider.id === draft.providerId)?.fullName ?? null,
+    },
   };
 
   const result = await extract({
@@ -411,14 +592,7 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
       "I did not quite follow that. Could you fill in the details below and I'll book it?",
       {},
       ['specialty', 'providerName', 'date', 'time'],
-      {
-        providers: providers.map((provider) => ({
-          id: provider.id,
-          fullName: provider.fullName,
-          specialty: provider.specialty,
-          slotDurationMinutes: provider.slotDurationMinutes,
-        })),
-      },
+      { providers: providers.map(toProviderSummary) },
     );
   }
 
