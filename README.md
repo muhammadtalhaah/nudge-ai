@@ -28,7 +28,7 @@ cp server/.env.example server/.env
 
 createdb nudge_ai_dev
 npm run db:setup      # applies db/schema.sql
-npm run db:seed       # applies db/seed.sql — sample clinic, doctors, appointments
+npm run db:seed       # sample clinic, doctors, appointments + demo logins
 
 npm run dev           # API on :4000, client on :5173
 ```
@@ -47,15 +47,15 @@ when a key is present and the offline assistant when it is not.
 
 ### Commands
 
-| Command                                     | What it does                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `npm run dev`                               | API + client with hot reload                                        |
-| `npm run build`                             | Builds the client (the server runs from source — no build step)     |
+| Command                                     | What it does                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `npm run dev`                               | API + client with hot reload                                             |
+| `npm run build`                             | Builds the client (the server runs from source — no build step)          |
 | `npm start`                                 | Runs the server for production (serves API **and** client from one port) |
-| `npm test`                                  | Full suite — server (real Postgres) then client (jsdom)             |
-| `npm run db:setup` / `db:seed` / `db:reset` | Schema, sample data, drop-and-recreate                              |
-| `npm run format`                            | Prettier                                                            |
-| `node scripts/browserSmoke.mjs`             | Drives the running app in Chrome, writes screenshots                |
+| `npm test`                                  | Full suite — server (real Postgres) then client (jsdom)                  |
+| `npm run db:setup` / `db:seed` / `db:reset` | Schema, sample data, drop-and-recreate                                   |
+| `npm run format`                            | Prettier                                                                 |
+| `node scripts/browserSmoke.mjs`             | Drives the running app in Chrome, writes screenshots                     |
 
 ---
 
@@ -240,7 +240,10 @@ doctor cards and the prefilled form arrive only with `assistant:reply`. See
 ## Database
 
 Eight tables. Full DDL with per-index rationale and performance notes in
-**[db/schema.sql](db/schema.sql)**; sample inserts in **[db/seed.sql](db/seed.sql)**.
+**[db/schema.sql](db/schema.sql)**. Sample inserts are split in two:
+**[db/seed-tenant.sql](db/seed-tenant.sql)** (businesses and providers — no credentials,
+applied to deployments too) and **[db/seed-demo.sql](db/seed-demo.sql)** (demo accounts and
+their activity — local only, since its password hashes are public in this repo).
 
 | Table                 | Purpose                                                     |
 | --------------------- | ----------------------------------------------------------- |
@@ -457,7 +460,7 @@ Either way one service serves the API, the WebSocket, and the client from a sing
 
 ```
 shared/            Zod schemas + constants, imported by client and server
-db/                schema.sql, seed.sql
+db/                schema.sql, seed-tenant.sql, seed-demo.sql
 server/src/
   routes/          middleware + validation + controller wiring only
   controllers/     HTTP ↔ service translation

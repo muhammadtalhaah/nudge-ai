@@ -30,9 +30,16 @@ services:
     # live there. Without it the build fails with "vite: not found". The devDependencies
     # are build-time only — nothing loads them at run time.
     buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
 
-    # Readiness endpoint: also confirms the database is reachable before taking traffic.
+    # `db:deploy` applies db/schema.sql to an empty database and (re)applies the tenant
+    # fixtures, then exits; the server only starts if it succeeds. It lives here rather
+    # than in buildCommand because the build runs in a different container, and rather
+    # than in a pre-deploy hook because the free plan has none. Idempotent, so the
+    # restart after each free-plan spin-down is harmless.
+    startCommand: npm run db:deploy && npm start
+
+    # Readiness endpoint. Note this only proves the database is *reachable* — it cannot
+    # detect a missing schema, which is why db:deploy gates the start command above.
     healthCheckPath: /api/ready
 
     envVars:

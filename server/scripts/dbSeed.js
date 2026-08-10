@@ -1,7 +1,12 @@
 /**
- * Applies db/seed.sql. Idempotent — safe to run repeatedly.
+ * Applies the full local fixture set — db/seed-tenant.sql then db/seed-demo.sql.
+ * Idempotent — safe to run repeatedly.
  *
  *   npm run db:seed
+ *
+ * Order matters: the demo rows reference businesses and providers defined by the tenant
+ * seed. Deployments run `npm run db:deploy` instead, which applies only the tenant half —
+ * see scripts/dbDeploy.js.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -23,7 +28,9 @@ const main = async () => {
 
   if (process.env.NODE_ENV === 'production') {
     console.error(
-      'Refusing to seed a production database: db/seed.sql contains publicly known demo passwords.',
+      'Refusing to seed a production database: db/seed-demo.sql contains publicly known\n' +
+        'demo passwords. Deployments should run `npm run db:deploy`, which applies the schema\n' +
+        'and db/seed-tenant.sql only.',
     );
     process.exit(1);
   }
@@ -35,10 +42,11 @@ const main = async () => {
 
   try {
     await client.connect();
-    const seed = await readFile(resolve(repoRoot, 'db/seed.sql'), 'utf8');
 
-    console.log('applying db/seed.sql');
-    await client.query(seed);
+    for (const file of ['db/seed-tenant.sql', 'db/seed-demo.sql']) {
+      console.log(`applying ${file}`);
+      await client.query(await readFile(resolve(repoRoot, file), 'utf8'));
+    }
 
     const { rows } = await client.query(
       `SELECT (SELECT count(*)::text FROM businesses)          AS businesses,
