@@ -7,10 +7,11 @@
  * hallucinated appointment.
  */
 
-import { Bot, CalendarCheck, ClipboardList, User } from 'lucide-react';
+import { Bot, CalendarCheck, ClipboardList } from 'lucide-react';
 
 import AppStatusBadge from '@/components/shared/AppStatusBadge';
 import BookingForm from '@/components/shared/BookingForm';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { formatDateTime } from '@/utils/formatDate';
@@ -71,15 +72,19 @@ const ChatMessage = ({ message, onBooked }) => {
 
   return (
     <div className={cn('flex gap-3', isUser && 'flex-row-reverse')}>
-      <div
-        className={cn(
-          'flex size-8 shrink-0 items-center justify-center rounded-full',
-          isUser ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground',
-        )}
-        aria-hidden="true"
-      >
-        {isUser ? <User className="size-4" /> : <Bot className="size-4" />}
-      </div>
+      {/*
+       * Only the assistant gets an avatar. Marking both sides is redundant — alignment and
+       * bubble colour already say who is speaking — and the user's own avatar is the one that
+       * adds nothing, since there is exactly one of them and they are reading their own screen.
+       * Dropping it also stops the right-hand column from being indented away from the edge.
+       */}
+      {isUser ? null : (
+        <Avatar className="ring-border/60 ring-1" aria-hidden="true">
+          <AvatarFallback className="bg-secondary text-secondary-foreground">
+            <Bot className="size-4" />
+          </AvatarFallback>
+        </Avatar>
+      )}
 
       <div className={cn('min-w-0 max-w-[85%] sm-tablet:max-w-[75%]', isUser && 'text-right')}>
         {/* Names the speaker for screen readers, which cannot see the avatar or alignment. */}

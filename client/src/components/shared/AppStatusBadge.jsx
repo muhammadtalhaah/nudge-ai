@@ -1,6 +1,9 @@
 /**
  * Appointment status badge.
  *
+ * A shadcn Badge in its outline variant, re-coloured per status: the primitive owns the shape,
+ * spacing and icon sizing, and this file owns only the palette.
+ *
  * Every status carries an icon and a text label as well as a colour, so status is never
  * communicated by colour alone (WCAG 1.4.1). Colours come from the semantic status tokens in
  * styles/theme.css, so a palette change does not touch this file.
@@ -8,6 +11,7 @@
 
 import { Ban, CalendarCheck, CheckCircle2, Clock, UserX } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 const STATUS_CONFIG = {
@@ -50,16 +54,10 @@ const AppStatusBadge = ({ status, className }) => {
   const { label, Icon, className: statusClassName } = config;
 
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium',
-        statusClassName,
-        className,
-      )}
-    >
-      <Icon className="size-3" aria-hidden="true" />
+    <Badge variant="outline" className={cn('gap-1.5 rounded-md', statusClassName, className)}>
+      <Icon aria-hidden="true" />
       {label}
-    </span>
+    </Badge>
   );
 };
 

@@ -12,14 +12,15 @@
 
 import { Bot } from 'lucide-react';
 
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+
 const StreamingMessage = ({ text }) => (
   <div className="flex gap-3">
-    <div
-      className="bg-secondary text-secondary-foreground flex size-8 shrink-0 items-center justify-center rounded-full"
-      aria-hidden="true"
-    >
-      <Bot className="size-4" />
-    </div>
+    <Avatar aria-hidden="true">
+      <AvatarFallback className="bg-secondary text-secondary-foreground">
+        <Bot className="size-4" />
+      </AvatarFallback>
+    </Avatar>
 
     <div className="sm-tablet:max-w-[75%] min-w-0 max-w-[85%]">
       {/* Static, so it is announced on appearance and not repeated as the text grows. */}

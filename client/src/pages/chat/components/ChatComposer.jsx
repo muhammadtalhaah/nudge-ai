@@ -5,11 +5,13 @@
  */
 
 import { useState } from 'react';
-import { Loader2, SendHorizontal } from 'lucide-react';
+import { SendHorizontal } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
-import { LIMITS } from '@shared/constants.ts';
+import { LIMITS } from '@shared/constants.js';
 
 const ChatComposer = ({ onSend, disabled, isSending }) => {
   const [value, setValue] = useState('');
@@ -41,9 +43,9 @@ const ChatComposer = ({ onSend, disabled, isSending }) => {
     >
       <div className="flex items-end gap-2">
         <div className="flex-1">
-          <label htmlFor="chat-input" className="sr-only">
+          <Label htmlFor="chat-input" className="sr-only">
             Message the assistant
-          </label>
+          </Label>
           <Textarea
             id="chat-input"
             value={value}
@@ -65,7 +67,7 @@ const ChatComposer = ({ onSend, disabled, isSending }) => {
 
         <Button type="submit" size="icon" disabled={!canSend} aria-label="Send message">
           {isSending ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            <Spinner role={undefined} aria-label={undefined} aria-hidden="true" />
           ) : (
             <SendHorizontal className="size-4" aria-hidden="true" />
           )}

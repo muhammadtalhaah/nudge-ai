@@ -9,6 +9,13 @@ import { Component } from 'react';
 import { RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+} from '@/components/ui/empty';
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -37,20 +44,26 @@ class ErrorBoundary extends Component {
     if (!error) return children;
 
     return (
-      <div className="flex min-h-[50vh] items-center justify-center p-6" role="alert">
-        <div className="max-w-md space-y-4 text-center">
-          <TriangleAlert className="text-destructive mx-auto size-8" aria-hidden="true" />
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="text-muted-foreground text-sm">
+      <Empty className="min-h-[50vh]" role="alert">
+        <EmptyHeader>
+          <EmptyMedia className="text-destructive">
+            <TriangleAlert className="size-8" aria-hidden="true" />
+          </EmptyMedia>
+          {/* A real h2: shadcn's EmptyTitle renders a div, and this heads a failed region. */}
+          <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+          <EmptyDescription>
             This part of the page failed to load. You can try again — the rest of the app is
             unaffected.
-          </p>
+          </EmptyDescription>
+        </EmptyHeader>
+
+        <EmptyContent>
           <Button onClick={this.handleReset} variant="outline">
             <RotateCcw className="size-4" aria-hidden="true" />
             Try again
           </Button>
-        </div>
-      </div>
+        </EmptyContent>
+      </Empty>
     );
   }
 }

@@ -12,10 +12,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { CalendarPlus, Loader2 } from 'lucide-react';
+import { CalendarPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { bookingFormSchema } from '@shared/schemas.ts';
+import { bookingFormSchema } from '@shared/schemas.js';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { useAvailability, useCreateAppointment, useProviders } from '@/hooks/useAppointments';
 import { cn } from '@/lib/utils';
@@ -287,7 +288,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
 
       <Button type="submit" disabled={isSubmitting} className={cn(compact && 'w-full')}>
         {isSubmitting ? (
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          <Spinner role={undefined} aria-label={undefined} aria-hidden="true" />
         ) : (
           <CalendarPlus className="size-4" aria-hidden="true" />
         )}

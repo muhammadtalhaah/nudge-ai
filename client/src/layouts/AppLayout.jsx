@@ -12,7 +12,16 @@ import { LogOut, Menu, MessageSquare } from 'lucide-react';
 import AppSidebar from '@/components/shared/AppSidebar';
 import ErrorBoundary from '@/components/shared/ErrorBoundary';
 import ThemeToggle from '@/components/shared/ThemeToggle';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/context/AuthContext';
 import { useLayout } from '@/context/LayoutContext';
@@ -72,21 +81,41 @@ const AppLayout = () => {
             <div className="ml-auto flex items-center gap-2">
               <ThemeToggle />
 
-              <div className="hidden items-center gap-2 sm-tablet:flex">
-                <span
-                  className="bg-secondary text-secondary-foreground flex size-8 items-center justify-center rounded-full text-sm font-medium"
-                  aria-hidden="true"
-                >
-                  {initial}
-                </span>
-                <span className="text-muted-foreground max-w-32 truncate text-sm">
-                  {user?.fullName}
-                </span>
-              </div>
+              {/* Account menu. Radix owns the focus handling and Escape, and the avatar is the
+                  trigger, so the header keeps one control instead of a chip plus a loose
+                  sign-out button. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="h-auto gap-2 rounded-full px-1 py-1 sm-tablet:pr-3"
+                    aria-label="Account menu"
+                  >
+                    <Avatar>
+                      <AvatarFallback className="bg-secondary text-secondary-foreground font-medium">
+                        {initial}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="text-muted-foreground hidden max-w-32 truncate text-sm sm-tablet:inline">
+                      {user?.fullName}
+                    </span>
+                  </Button>
+                </DropdownMenuTrigger>
 
-              <Button variant="ghost" size="icon" onClick={logout} aria-label="Sign out">
-                <LogOut className="size-4" aria-hidden="true" />
-              </Button>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel className="truncate font-normal">
+                    <span className="block truncate font-medium">{user?.fullName}</span>
+                    <span className="text-muted-foreground block truncate text-xs">
+                      {user?.email}
+                    </span>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => void logout()}>
+                    <LogOut aria-hidden="true" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </header>

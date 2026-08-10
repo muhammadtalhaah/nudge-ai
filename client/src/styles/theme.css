@@ -110,17 +110,26 @@
   --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.556 0 0);
 
-  /* Status colours are lifted in dark mode to hold contrast against a dark surface. */
+  /*
+   * Status colours are lifted in dark mode to hold contrast against a dark surface.
+   *
+   * The -foreground pairs are LIGHT here, which looks inverted next to the light-mode block
+   * until you note where they are actually used: every consumer paints them on a 15% tint of
+   * the base colour, never on a solid fill. On light backgrounds that tint is pale, so the
+   * text must be dark; on dark backgrounds the same tint is near-black, so the text must be
+   * light. Naming them "foreground" invites the solid-fill reading — if a solid chip is ever
+   * introduced it needs its own token rather than borrowing these.
+   */
   --status-pending: oklch(0.82 0.15 80);
-  --status-pending-foreground: oklch(0.2 0.05 80);
+  --status-pending-foreground: oklch(0.88 0.13 80);
   --status-confirmed: oklch(0.75 0.16 155);
-  --status-confirmed-foreground: oklch(0.18 0.05 155);
+  --status-confirmed-foreground: oklch(0.86 0.14 155);
   --status-cancelled: oklch(0.68 0.19 25);
-  --status-cancelled-foreground: oklch(0.15 0.02 25);
+  --status-cancelled-foreground: oklch(0.84 0.13 25);
   --status-completed: oklch(0.7 0.13 250);
-  --status-completed-foreground: oklch(0.15 0.02 250);
+  --status-completed-foreground: oklch(0.85 0.1 250);
   --status-no-show: oklch(0.7 0.02 0);
-  --status-no-show-foreground: oklch(0.15 0 0);
+  --status-no-show-foreground: oklch(0.87 0.01 0);
 
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);

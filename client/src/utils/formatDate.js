@@ -43,6 +43,30 @@ export const formatRelative = (iso) => {
   return dateTimeFormatter.format(new Date(iso));
 };
 
+/**
+ * Which recency bucket an instant falls into: 'today' | 'yesterday' | 'week' | 'older'.
+ *
+ * Buckets are calendar-based, not elapsed-time based, because that is how people read their
+ * own history — something at 11pm last night is "yesterday" at 1am, not "2h ago". Comparing
+ * midnights rather than subtracting milliseconds is also what keeps it correct across a
+ * daylight-saving boundary, where a "day" is not 24 hours.
+ */
+export const recencyBucket = (iso) => {
+  if (!iso) return 'older';
+
+  const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return 'older';
+
+  const days = Math.round((startOfDay(new Date()) - startOfDay(then)) / 86_400_000);
+
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 7) return 'week';
+  return 'older';
+};
+
 /** True when the instant falls on today's local calendar date. */
 export const isToday = (iso) => {
   if (!iso) return false;

@@ -13,12 +13,20 @@ import ChatComposer from './components/ChatComposer';
 import ChatMessage from './components/ChatMessage';
 import StreamingMessage from './components/StreamingMessage';
 import TypingIndicator from './components/TypingIndicator';
-import useChatSession from './hooks/useChatSession';
 import ErrorState from '@/components/shared/ErrorState';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
+import useChatSession from '@/hooks/useChatSession';
 import { SOCKET_STATUS } from '@/hooks/useSocket';
 
 /** Concrete examples, so a first-time user knows what the assistant can actually do. */
@@ -109,48 +117,57 @@ const ChatPage = () => {
 
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
         {/* aria-live so incoming assistant replies are announced without stealing focus. */}
+        {/* A column rather than a plain block so the turns can sit at the bottom: `mt-auto` on
+            the list pushes a short conversation down to the composer instead of stranding it at
+            the top above a wall of empty card. Once the thread is long enough to scroll, the
+            margin collapses and this behaves like an ordinary scroll container. */}
         <div
           ref={scrollRef}
-          className="flex-1 space-y-4 overflow-y-auto p-4"
+          className="flex flex-1 flex-col overflow-y-auto p-4"
           role="log"
           aria-live="polite"
           aria-label="Conversation"
         >
           {isBootstrapping ? (
-            <div className="space-y-4" aria-busy="true">
+            <div className="mt-auto space-y-4" aria-busy="true">
               <span className="sr-only">Loading your conversation</span>
               <Skeleton className="h-12 w-3/5" />
               <Skeleton className="ml-auto h-12 w-2/5" />
               <Skeleton className="h-20 w-4/5" />
             </div>
           ) : error && messages.length === 0 ? (
-            <ErrorState message={error} onRetry={retry} />
+            <div className="m-auto">
+              <ErrorState message={error} onRetry={retry} />
+            </div>
           ) : messages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-              <div className="bg-secondary rounded-full p-3">
-                <Bot className="text-secondary-foreground size-6" aria-hidden="true" />
-              </div>
-              <div className="space-y-1">
-                <p className="font-medium">How can I help?</p>
-                <p className="text-muted-foreground text-sm">Ask in your own words.</p>
-              </div>
+            <Empty className="m-auto">
+              <EmptyHeader>
+                <EmptyMedia
+                  variant="icon"
+                  className="bg-secondary text-secondary-foreground rounded-full"
+                >
+                  <Bot aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle className="text-base">How can I help?</EmptyTitle>
+                <EmptyDescription>Ask in your own words.</EmptyDescription>
+              </EmptyHeader>
 
-              <div className="flex w-full max-w-md flex-col gap-2">
+              <EmptyContent className="max-w-md gap-2">
                 {SUGGESTIONS.map((suggestion) => (
                   <Button
                     key={suggestion}
                     variant="outline"
                     size="sm"
-                    className="h-auto justify-start py-2 text-left whitespace-normal"
+                    className="h-auto w-full justify-start py-2 text-left whitespace-normal"
                     onClick={() => sendMessage(suggestion)}
                   >
                     {suggestion}
                   </Button>
                 ))}
-              </div>
-            </div>
+              </EmptyContent>
+            </Empty>
           ) : (
-            <>
+            <div className="mt-auto space-y-4">
               {messages.map((message) => (
                 <ChatMessage key={message.id} message={message} />
               ))}
@@ -163,7 +180,7 @@ const ChatPage = () => {
               ) : isAwaitingReply ? (
                 <TypingIndicator />
               ) : null}
-            </>
+            </div>
           )}
 
           {/* Scroll anchor. */}

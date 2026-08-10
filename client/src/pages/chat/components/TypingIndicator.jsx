@@ -7,15 +7,16 @@
 
 import { Bot } from 'lucide-react';
 
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+
 const TypingIndicator = () => {
   return (
     <div className="flex gap-3" aria-live="polite">
-      <div
-        className="bg-secondary text-secondary-foreground flex size-8 shrink-0 items-center justify-center rounded-full"
-        aria-hidden="true"
-      >
-        <Bot className="size-4" />
-      </div>
+      <Avatar aria-hidden="true">
+        <AvatarFallback className="bg-secondary text-secondary-foreground">
+          <Bot className="size-4" />
+        </AvatarFallback>
+      </Avatar>
 
       <div className="bg-muted flex items-center gap-1 rounded-lg px-3 py-3">
         <span className="sr-only">The assistant is typing</span>

@@ -2,7 +2,7 @@
  * Chat session state and the socket wiring for one conversation.
  *
  * Owns: ensuring a session exists, replaying its history, sending over the socket, and folding
- * incoming events into local state. The page component below is presentation only.
+ * incoming events into local state. The page component is presentation only.
  *
  * Messages are kept in local state rather than the Query cache because they arrive by push and
  * are append-only — a cache built for request/response would be fighting the transport.
@@ -14,7 +14,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import chatApi from '@/api/chat';
 import { SOCKET_STATUS, useSocket } from '@/hooks/useSocket';
 import { queryKeys } from '@/config/queryKeys';
-import { SOCKET_EVENTS } from '@shared/constants.ts';
+import { SOCKET_EVENTS } from '@shared/constants.js';
 
 /**
  * @param requestedSessionId  a specific conversation to open (from the URL), or null to resume

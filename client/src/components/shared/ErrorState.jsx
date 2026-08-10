@@ -1,33 +1,38 @@
 /**
  * Inline error state with a retry action.
  *
- * Every async surface in the app uses this rather than rendering a raw message, so a failure
- * always comes with a way out.
+ * Shares shadcn's Empty primitives with EmptyState, so a failed list and an empty one are laid
+ * out identically and only their content differs. Every async surface in the app uses this
+ * rather than rendering a raw message, so a failure always comes with a way out.
  */
 
 import { RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { cn } from '@/lib/utils';
 
 const ErrorState = ({ message, onRetry, isRetrying = false, className }) => {
   return (
-    <div
-      className={cn(
-        'flex flex-col items-center justify-center gap-3 px-6 py-10 text-center',
-        className,
-      )}
-      role="alert"
-    >
-      <TriangleAlert className="text-destructive size-6" aria-hidden="true" />
-      <p className="text-sm">{message || 'Something went wrong.'}</p>
+    <Empty className={className} role="alert">
+      <EmptyHeader>
+        <EmptyMedia className="text-destructive">
+          <TriangleAlert className="size-6" aria-hidden="true" />
+        </EmptyMedia>
+        <EmptyTitle className="text-sm font-normal">
+          {message || 'Something went wrong.'}
+        </EmptyTitle>
+      </EmptyHeader>
+
       {onRetry ? (
-        <Button variant="outline" size="sm" onClick={onRetry} disabled={isRetrying}>
-          <RotateCcw className={cn('size-4', isRetrying && 'animate-spin')} aria-hidden="true" />
-          {isRetrying ? 'Retrying' : 'Try again'}
-        </Button>
+        <EmptyContent>
+          <Button variant="outline" size="sm" onClick={onRetry} disabled={isRetrying}>
+            <RotateCcw className={cn('size-4', isRetrying && 'animate-spin')} aria-hidden="true" />
+            {isRetrying ? 'Retrying' : 'Try again'}
+          </Button>
+        </EmptyContent>
       ) : null}
-    </div>
+    </Empty>
   );
 };
 

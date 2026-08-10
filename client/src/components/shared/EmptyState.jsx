@@ -1,31 +1,34 @@
 /**
- * Empty state. shadcn/ui has no equivalent of Ant Design's Empty, so this is the shared
- * component that owns the decision once instead of every list inventing its own.
+ * Empty state.
+ *
+ * A thin wrapper over shadcn's Empty primitives that fixes the props every list in this app
+ * needs — icon, title, description, one action — so the decision is owned once rather than
+ * re-made at each call site.
  */
 
-import { cn } from '@/lib/utils';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 
 const EmptyState = ({ icon: Icon, title, description, action, className }) => {
   return (
-    <div
-      className={cn(
-        'flex flex-col items-center justify-center gap-3 px-6 py-12 text-center',
-        className,
-      )}
-    >
-      {Icon ? (
-        <div className="bg-muted rounded-full p-3">
-          <Icon className="text-muted-foreground size-6" aria-hidden="true" />
-        </div>
-      ) : null}
-      <div className="space-y-1">
-        <p className="font-medium">{title}</p>
-        {description ? (
-          <p className="text-muted-foreground max-w-sm text-sm">{description}</p>
+    <Empty className={className}>
+      <EmptyHeader>
+        {Icon ? (
+          <EmptyMedia variant="icon" className="rounded-full">
+            <Icon aria-hidden="true" />
+          </EmptyMedia>
         ) : null}
-      </div>
-      {action}
-    </div>
+        <EmptyTitle className="text-base">{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
+    </Empty>
   );
 };
 

@@ -12,16 +12,16 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { loginSchema } from '@shared/schemas.ts';
+import { loginSchema } from '@shared/schemas.js';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Field, FieldError, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Spinner } from '@/components/ui/spinner';
 import { ROUTES } from '@/config/constants';
 import { useAuth } from '@/context/AuthContext';
 import { applyServerErrors } from '@/utils/serverErrors';
@@ -109,7 +109,9 @@ const LoginPage = () => {
           </Field>
 
           <Button type="submit" className="w-full" disabled={isSubmitting || !isValid}>
-            {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+            {isSubmitting ? (
+              <Spinner role={undefined} aria-label={undefined} aria-hidden="true" />
+            ) : null}
             {isSubmitting ? 'Signing in' : 'Sign in'}
           </Button>
         </form>

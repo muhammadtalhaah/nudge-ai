@@ -2,7 +2,7 @@
  * Full-viewport loading state, used while the app works out whether there is a session.
  */
 
-import { Loader2 } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
 
 const FullPageSpinner = ({ label = 'Loading' }) => {
   return (
@@ -13,7 +13,14 @@ const FullPageSpinner = ({ label = 'Loading' }) => {
       aria-live="polite"
     >
       <div className="flex flex-col items-center gap-3">
-        <Loader2 className="text-muted-foreground size-6 animate-spin" aria-hidden="true" />
+        {/* The wrapper above already carries the status role and the label, so the icon's own
+            defaults are cleared rather than announced a second time. */}
+        <Spinner
+          className="text-muted-foreground size-6"
+          role={undefined}
+          aria-label={undefined}
+          aria-hidden="true"
+        />
         <p className="text-muted-foreground text-sm">{label}…</p>
       </div>
     </div>

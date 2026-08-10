@@ -12,8 +12,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
-      // Contracts live at the repo root and are shared with the server. Vite transpiles
-      // the TypeScript on the fly, so there is no build step between the two packages.
+      // Contracts live at the repo root and are shared with the server. They are plain
+      // ES modules, so there is no build step between the two packages.
       '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
     },
   },
