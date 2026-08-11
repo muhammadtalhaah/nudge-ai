@@ -168,7 +168,7 @@ describe('conversational booking', () => {
     expect(rows[0].source).toBe('chat');
   });
 
-  it('falls back to the form when details are missing, keeping what was understood', async () => {
+  it('asks for the missing details rather than handing over a form', async () => {
     setProviderForTesting(
       fakeProvider(
         extraction({
@@ -190,7 +190,12 @@ describe('conversational booking', () => {
     );
     const { reply } = response.body.data;
 
-    expect(reply.kind).toBe('form_fallback');
+    /*
+     * A question, not a form. Everything the form would have needed still travels with it — the
+     * prefill and `missing` below — so the person can open it if they would rather, and the next
+     * turn picks the draft up either way. What changed is that the assistant now asks.
+     */
+    expect(reply.kind).toBe('needs_detail');
     // Dermatology resolves to exactly one provider in the fixture, so it is prefilled.
     expect(reply.prefill.providerId).toBe(tenant.otherProviderId);
     expect(reply.prefill.specialty).toBe('Dermatology');
@@ -225,7 +230,7 @@ describe('conversational booking', () => {
     ).expect(201);
     const { reply } = response.body.data;
 
-    expect(reply.kind).toBe('form_fallback');
+    expect(reply.kind).toBe('needs_detail');
     expect(reply.providers).toHaveLength(2);
     expect(reply.missing).toEqual(['providerName']);
   });
@@ -328,7 +333,7 @@ describe('listing doctors, appointments and free times', () => {
     ).expect(201);
     const { reply } = response.body.data;
 
-    expect(reply.kind).toBe('form_fallback');
+    expect(reply.kind).toBe('needs_detail');
     expect(reply.missing).toEqual(['providerName']);
     expect(reply.providers).toHaveLength(2);
   });
@@ -370,9 +375,48 @@ describe('listing doctors, appointments and free times', () => {
     const response = await say(accessToken, sessionId, 'and what about friday?').expect(201);
 
     const { reply } = response.body.data;
-    expect(reply.kind).toBe('form_fallback');
+    expect(reply.kind).toBe('needs_detail');
     expect(reply.missing).toEqual(['date']);
     // The doctor was never in question and is not asked for again.
+    expect(reply.prefill.providerId).toBe(tenant.providerId);
+  });
+
+  /**
+   * The reported bug, as it was reported.
+   *
+   * "I would like to see Dr X, can you tell me his availability timings" got a booking form with
+   * a Confirm booking button, under a sentence asking which day. They had asked for information
+   * and had not asked to book anything.
+   */
+  it('answers an availability question with a question, not a booking form', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: tenant.providerName,
+            date: null,
+            time: null,
+            notes: null,
+          },
+          reply: `Which day would you like to see ${tenant.providerName}?`,
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      `i would like to see ${tenant.providerName}. can you tell me his availability timings`,
+    ).expect(201);
+
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('needs_detail');
+    expect(reply.kind).not.toBe('form_fallback');
+    expect(reply.missing).toEqual(['date']);
+    // The doctor they named is held, so answering "Tuesday" completes the question.
     expect(reply.prefill.providerId).toBe(tenant.providerId);
   });
 
@@ -434,7 +478,7 @@ describe('listing doctors, appointments and free times', () => {
     ).expect(201);
     const { reply } = response.body.data;
 
-    expect(reply.kind).toBe('form_fallback');
+    expect(reply.kind).toBe('needs_detail');
     expect(reply.text).toMatch(/nothing free/i);
     expect(reply.prefill.providerId).toBe(tenant.providerId);
     // The day is what did not work, so it is the only thing asked for again.
@@ -554,7 +598,9 @@ describe('the conversation carries its own context', () => {
     // model is told what its previous reply actually was — a fact it cannot read off prose.
     expect(second).toContain(tenant.otherProviderName);
     expect(second).toContain('Dermatology');
-    expect(second).toMatch(/showed a form/);
+    // It asked for the details in conversation, so it is told that rather than that it showed
+    // a form. Getting this wrong leaves the model unable to answer a bare "Tuesday".
+    expect(second).toMatch(/asked them for the booking details/);
   });
 
   it('re-attempts nothing after a booking completes', async () => {
@@ -579,7 +625,7 @@ describe('the conversation carries its own context', () => {
     await say(accessToken, sessionId, 'GP tomorrow at 10').expect(201);
     const response = await say(accessToken, sessionId, 'thanks').expect(201);
 
-    expect(response.body.data.reply.kind).toBe('form_fallback');
+    expect(response.body.data.reply.kind).toBe('needs_detail');
 
     const { rows } = await pool.query('SELECT count(*)::text AS count FROM appointments');
     expect(rows[0].count).toBe('1');
@@ -619,7 +665,7 @@ describe('the conversation carries its own context', () => {
     const response = await say(accessToken, sessionId, 'ok').expect(201);
     const { reply } = response.body.data;
 
-    expect(reply.kind).toBe('form_fallback');
+    expect(reply.kind).toBe('needs_detail');
     expect(reply.prefill.providerId).toBe(tenant.providerId);
     expect(reply.missing).toEqual(['date', 'time']);
 
@@ -1384,7 +1430,7 @@ describe('conversation replay', () => {
     const assistantTurn = history.body.data.messages.find((m) => m.role === 'assistant');
 
     // Rich parts survive a reload rather than degrading to plain text.
-    expect(assistantTurn.reply.kind).toBe('form_fallback');
+    expect(assistantTurn.reply.kind).toBe('needs_detail');
     expect(assistantTurn.reply.prefill.specialty).toBe('Dermatology');
   });
 });

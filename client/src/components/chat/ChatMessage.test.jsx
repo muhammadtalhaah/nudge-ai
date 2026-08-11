@@ -8,6 +8,7 @@
  */
 
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ChatMessage from './ChatMessage';
@@ -32,6 +33,33 @@ const PROVIDER = {
   fullName: 'Dr. Samuel Okafor',
   specialty: 'Dermatology',
   slotDurationMinutes: 30,
+};
+
+const SECOND_PROVIDER = {
+  id: '22222222-2222-4222-8222-222222222222',
+  fullName: 'Dr. Amara Chen',
+  specialty: 'Dermatology',
+  slotDurationMinutes: 30,
+};
+
+/**
+ * An assistant turn that is still gathering, asked as a question.
+ *
+ * This is the shape the reported bug produced: somebody asked for a doctor's availability, and
+ * the reply arrived as a booking form with a Confirm booking button.
+ */
+const needsDetailTurn = {
+  id: 'assistant-0',
+  role: 'assistant',
+  content: 'Which day would you like to see Dr. Samuel Okafor?',
+  createdAt: '',
+  reply: {
+    kind: 'needs_detail',
+    text: 'Which day would you like to see Dr. Samuel Okafor?',
+    prefill: { providerId: PROVIDER.id },
+    missing: ['date'],
+    providers: [PROVIDER],
+  },
 };
 
 /** An assistant turn carrying the prefilled fallback form. */
@@ -74,6 +102,66 @@ const renderTurn = (props) => renderWithProviders(<ChatMessage {...props} />, { 
 beforeEach(() => {
   listProviders.mockResolvedValue({ ok: true, data: { providers: [PROVIDER] } });
   getAvailability.mockResolvedValue({ ok: true, data: { slots: [] } });
+});
+
+describe('a turn that is still gathering details', () => {
+  it('asks the question without opening a booking form', () => {
+    renderTurn({ message: needsDetailTurn, isBookingResolved: false });
+
+    expect(screen.getByText('Which day would you like to see Dr. Samuel Okafor?')).toBeVisible();
+
+    /*
+     * The bug, stated as an assertion. A form with a Confirm booking button under "which day
+     * would you like?" answers a question nobody asked and turns the assistant into a wrapper
+     * around the form it was meant to replace.
+     */
+    expect(screen.queryByRole('button', { name: /confirm booking/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Finish the details')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^date/i)).not.toBeInTheDocument();
+  });
+
+  it('offers the form to anyone who would rather fill it in', async () => {
+    const user = userEvent.setup();
+    renderTurn({ message: needsDetailTurn, isBookingResolved: false });
+
+    // Present but closed: someone who prefers four fields to a conversation should not have to
+    // talk their way to them.
+    await user.click(screen.getByRole('button', { name: /fill in the details instead/i }));
+
+    expect(screen.getByText('Finish the details')).toBeInTheDocument();
+    expect(await screen.findByLabelText(/^provider/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm booking/i })).toBeInTheDocument();
+  });
+
+  it('shows the candidates when the question is which provider', () => {
+    renderTurn({
+      message: {
+        ...needsDetailTurn,
+        reply: {
+          ...needsDetailTurn.reply,
+          text: 'Several of our doctors match that — which would you prefer?',
+          missing: ['providerName'],
+          providers: [PROVIDER, SECOND_PROVIDER],
+        },
+      },
+      isBookingResolved: false,
+    });
+
+    // The cards answer the question rather than help fill in a field, so they sit outside the
+    // closed form.
+    expect(screen.getByText('Dr. Samuel Okafor')).toBeInTheDocument();
+    expect(screen.getByText('Dr. Amara Chen')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /confirm booking/i })).not.toBeInTheDocument();
+  });
+
+  it('is retired once a later turn is a completed booking', () => {
+    renderTurn({ message: needsDetailTurn, isBookingResolved: true });
+
+    expect(
+      screen.queryByRole('button', { name: /fill in the details instead/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Which day would you like to see Dr. Samuel Okafor?')).toBeVisible();
+  });
 });
 
 describe('the fallback booking form', () => {

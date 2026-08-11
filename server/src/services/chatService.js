@@ -321,10 +321,36 @@ const mergeDraft = (draft, fields) => {
 /**
  * Build the form-fallback reply: prose, whatever was understood, and what is still needed.
  *
+ * Reserved for the turns where asking again would not help — the extraction failed, the person
+ * named a doctor that matches nothing, or the clinic refused the slot. Everything that is merely
+ * an unanswered question goes through `needsDetail` instead.
+ *
  * @returns {import('../../../shared/chat.js').ChatReply}
  */
 const formFallback = (text, prefill, missing, extras = {}) => ({
   kind: REPLY_KIND.FORM_FALLBACK,
+  text,
+  prefill,
+  missing,
+  ...extras,
+});
+
+/**
+ * Build the still-gathering reply: the same payload, asked as a question.
+ *
+ * This is the ordinary way an incomplete booking advances. The assistant has a resolved-enough
+ * draft and one clear thing to ask, so it asks — the client shows the sentence and keeps the
+ * form closed behind it. Handing over a booking form to find out which day someone wants makes
+ * the assistant a wrapper around the form it was supposed to replace.
+ *
+ * The payload is identical to a form fallback on purpose: `missing` still marks the fields, the
+ * prefill still carries what is settled, and `findBookingDraft` reads both kinds the same way —
+ * so nothing is lost if the person opens the form anyway.
+ *
+ * @returns {import('../../../shared/chat.js').ChatReply}
+ */
+const needsDetail = (text, prefill, missing, extras = {}) => ({
+  kind: REPLY_KIND.NEEDS_DETAIL,
   text,
   prefill,
   missing,
@@ -371,7 +397,7 @@ const actOnAvailability = async (caller, extraction, context) => {
   // Availability is per-doctor, so "when are you free this week?" cannot be answered as
   // asked. Showing the doctors is the useful half of the answer.
   if (resolution.status !== 'resolved') {
-    return formFallback(
+    return needsDetail(
       resolution.status === 'ambiguous'
         ? 'Several of our doctors match that — whose availability would you like?'
         : `${extraction.reply} Which doctor did you have in mind?`,
@@ -388,8 +414,16 @@ const actOnAvailability = async (caller, extraction, context) => {
 
   const provider = resolution.provider;
 
+  /*
+   * Somebody asked what a doctor's free times are and did not say which day.
+   *
+   * This is a question, and the answer is another question — not a booking form. Opening one
+   * here was the worst of the lot: they had asked for information, had not asked to book
+   * anything, and were handed a form with a Confirm booking button under a sentence saying
+   * "which day shall I check?".
+   */
   if (!fields.date) {
-    return formFallback(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
+    return needsDetail(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
       providers: [toProviderSummary(provider)],
     });
   }
@@ -399,7 +433,7 @@ const actOnAvailability = async (caller, extraction, context) => {
   if (slots.length === 0) {
     // The date is dropped from what carries forward — it is the part that did not work, and
     // leaving it in would have the next vague turn ask about the same full day.
-    return formFallback(
+    return needsDetail(
       `${provider.fullName} has nothing free that day. Would another day work?`,
       { ...prefill, date: null },
       ['date'],
@@ -520,9 +554,19 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     return !fields[field];
   });
 
+  /*
+   * No doctor yet, and the two reasons for that are not the same turn.
+   *
+   * Naming one we cannot match is the brief's ambiguous input: repeating the question would
+   * invite the same unmatchable answer, so the form opens with the real list to choose from.
+   * Naming nobody at all is just a question not yet asked, so it is asked.
+   */
   if (resolution.status === 'unknown') {
-    return formFallback(
-      fields.specialty || fields.providerName
+    const namedSomeone = Boolean(fields.specialty || fields.providerName);
+    const ask = namedSomeone ? formFallback : needsDetail;
+
+    return ask(
+      namedSomeone
         ? `I could not match that to one of our doctors. ${extraction.reply}`
         : extraction.reply,
       prefill,
@@ -531,8 +575,9 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     );
   }
 
+  // Two or three candidates is a question with the answers already on screen as cards.
   if (resolution.status === 'ambiguous') {
-    return formFallback(
+    return needsDetail(
       'Several of our doctors match that — which would you prefer?',
       prefill,
       ['providerName'],
@@ -540,9 +585,9 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     );
   }
 
-  // Provider is known; a date and time are still required.
+  // Provider is known; a date and time are still required. The assistant asks for them.
   if (!fields.date || !fields.time) {
-    return formFallback(extraction.reply, prefill, stillMissing, {
+    return needsDetail(extraction.reply, prefill, stillMissing, {
       providers: [toProviderSummary(resolution.provider)],
     });
   }
