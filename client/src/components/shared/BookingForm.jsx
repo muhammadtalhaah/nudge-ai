@@ -286,7 +286,11 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
         {errors.notes ? <FieldError>{errors.notes.message}</FieldError> : null}
       </Field>
 
-      <Button type="submit" disabled={isSubmitting} className={cn(compact && 'w-full')}>
+      <Button
+        type="submit"
+        disabled={isSubmitting}
+        className={cn('text-white', compact && 'w-full')}
+      >
         {isSubmitting ? (
           <Spinner role={undefined} aria-label={undefined} aria-hidden="true" />
         ) : (

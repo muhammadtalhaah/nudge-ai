@@ -40,9 +40,9 @@ import { useAppointments, useCancelAppointment } from '@/hooks/useAppointments';
 import { formatDateTime } from '@/utils/formatDate';
 
 const SCOPES = [
+  { value: 'all', label: 'All' },
   { value: 'upcoming', label: 'Upcoming' },
   { value: 'past', label: 'Past' },
-  { value: 'all', label: 'All' },
 ];
 
 const isValidScope = (value) => SCOPES.some((scope) => scope.value === value);
@@ -151,7 +151,7 @@ const AppointmentsPage = () => {
           <p className="text-muted-foreground text-sm">Everything you have booked with us.</p>
         </div>
 
-        <Button onClick={() => setIsBookingOpen(true)}>
+        <Button className="text-white" onClick={() => setIsBookingOpen(true)}>
           <CalendarPlus className="size-4" aria-hidden="true" />
           Book appointment
         </Button>

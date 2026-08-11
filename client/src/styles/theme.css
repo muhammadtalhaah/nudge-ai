@@ -76,11 +76,11 @@
   --status-confirmed: oklch(0.65 0.15 155);
   --status-confirmed-foreground: oklch(0.22 0.05 155);
   --status-cancelled: oklch(0.6 0.2 25);
-  --status-cancelled-foreground: oklch(0.98 0.01 25);
+  --status-cancelled-foreground: oklch(0.4 0.16 25);
   --status-completed: oklch(0.6 0.12 250);
-  --status-completed-foreground: oklch(0.98 0.01 250);
+  --status-completed-foreground: oklch(0.35 0.09 250);
   --status-no-show: oklch(0.55 0.02 0);
-  --status-no-show-foreground: oklch(0.98 0 0);
+  --status-no-show-foreground: oklch(0.35 0 0);
 
   /* Sidebar. A distinct surface from --background so the navigation reads as chrome rather
      than page content — in the reference it is the *darker* of the two, and light mode

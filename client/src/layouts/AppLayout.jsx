@@ -6,7 +6,7 @@
  * drifts out of step.
  */
 
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { LogOut, Menu, MessageSquare } from 'lucide-react';
 
 import AppSidebar from '@/components/shared/AppSidebar';
@@ -25,8 +25,11 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/context/AuthContext';
 import { useLayout } from '@/context/LayoutContext';
+import { ROUTES } from '@/config/constants';
+import { cn } from '@/lib/utils';
 
 const AppLayout = () => {
+  const location = useLocation();
   const { user, logout } = useAuth();
   const { isSidebarOpen, openSidebar, closeSidebar } = useLayout();
 
@@ -120,7 +123,12 @@ const AppLayout = () => {
           </div>
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-6 sm-tablet:px-6">
+        <main
+          className={cn(
+            'min-h-0 min-w-0 flex-1 overflow-y-auto',
+            location.pathname === ROUTES.CHAT ? '' : 'px-4 py-6 sm-tablet:px-6',
+          )}
+        >
           {/* Scoped per page: a crash in one view leaves the sidebar and header usable. */}
           <ErrorBoundary>
             <Outlet />

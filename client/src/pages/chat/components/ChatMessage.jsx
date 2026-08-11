@@ -120,7 +120,7 @@ const ChatMessage = ({ message, onBooked }) => {
         */}
         <div
           className={cn(
-            'text-left text-sm whitespace-pre-wrap',
+            'text-left text-base whitespace-pre-wrap',
             isUser
               ? 'bg-secondary text-secondary-foreground inline-block rounded-3xl px-4 py-2.5'
               : 'text-foreground',

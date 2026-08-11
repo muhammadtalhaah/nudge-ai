@@ -40,7 +40,6 @@ const ChatComposer = ({ onSend, disabled, isSending }) => {
         event.preventDefault();
         submit();
       }}
-      className="p-3 sm-tablet:p-4"
     >
       {/*
         One rounded surface holding the field and the send control, rather than a bordered

@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Bot, Sparkles, WifiOff } from 'lucide-react';
+import { Bot, WifiOff } from 'lucide-react';
 
 import ChatComposer from './components/ChatComposer';
 import ChatMessage from './components/ChatMessage';
@@ -95,15 +95,6 @@ const ChatPage = () => {
           affects, rather than being duplicated here. */}
       {/* Held to the conversation's column so the page reads as one column of content rather
           than a full-width header sitting above a narrower thread. */}
-      <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Sparkles className="text-primary size-5" aria-hidden="true" />
-          Assistant
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          Describe what you need and I will book it. No forms unless you want them.
-        </p>
-      </div>
 
       {/* Connection state is surfaced rather than hidden — messages still send over REST. */}
       {isOffline ? (
@@ -122,7 +113,7 @@ const ChatPage = () => {
         sitting on it. Card is kept for its layout rather than restyled globally — it still
         reads as a card everywhere else in the app.
       */}
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none">
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none !gap-0">
         {/* aria-live so incoming assistant replies are announced without stealing focus. */}
         {/* A column rather than a plain block so the turns can sit at the bottom: `mt-auto` on
             the list pushes a short conversation down to the composer instead of stranding it at
@@ -176,7 +167,7 @@ const ChatPage = () => {
           ) : (
             // A measured column rather than the full width of the page: long assistant replies
             // are now unbubbled, so line length is what keeps them readable.
-            <div className="mx-auto mt-auto w-full max-w-3xl space-y-6">
+            <div className="mx-auto w-full max-w-3xl space-y-6">
               {messages.map((message) => (
                 <ChatMessage key={message.id} message={message} />
               ))}
@@ -207,7 +198,7 @@ const ChatPage = () => {
 
         {/* Held to the same column as the conversation above it, so the composer lines up with
             the messages rather than spanning a width nothing else uses. */}
-        <div className="mx-auto w-full max-w-3xl">
+        <div className="mx-auto w-full max-w-3xl mb-5">
           <ChatComposer
             onSend={sendMessage}
             disabled={isBootstrapping}
