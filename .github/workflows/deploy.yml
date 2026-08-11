@@ -1,0 +1,179 @@
+# Deploys main to Render by calling the service's deploy hook.
+#
+# Render's GitHub App link no longer delivers push events for this repository, so
+# git-push auto-deploy is dead. This workflow is the deploy path: it builds and runs the
+# tests that need no external services, then asks Render to deploy the exact commit that
+# was just verified.
+#
+# Requires one repository secret: RENDER_DEPLOY_HOOK_URL — the full deploy hook URL from
+# Render (Dashboard > nudge-ai > Settings > Deploy Hook), including its `?key=...`.
+#
+# The server suite (server/src/**/*.test.js) is deliberately NOT run here: it requires a
+# live PostgreSQL with a `nudge_ai_test` database and an applied db/schema.sql, so it
+# cannot run on a bare runner. See README for running it locally.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Redeploy the current tip of main without inventing a commit — after changing an env
+  # var in Render, or after a free-tier database is replaced.
+  workflow_dispatch:
+
+# Serialise deploys, but never cancel one. Cancelling the deploy job can kill the runner
+# in the window between Render accepting the POST and the job reading the response, which
+# leaves a red run next to a real deploy.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and client tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # Mirrors Render's build command (`npm ci --include=dev && npm run build`). Render
+      # sets NODE_ENV=production, which makes npm drop devDependencies; --include=dev is
+      # what keeps Vite installed there. Setting both here means a dependency filed under
+      # the wrong section fails in CI instead of only on Render.
+      - name: Install dependencies
+        run: npm ci --include=dev
+        env:
+          NODE_ENV: production
+
+      - name: Build the client
+        run: npm run build
+
+      - name: Client tests
+        run: npm -w client run test
+
+  deploy:
+    name: Trigger Render deploy
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call the Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RENDER_DEPLOY_HOOK_URL:-}" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL is empty or unset. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # Strip stray whitespace. A secret set from a terminal (`gh secret set`, paste,
+          # Enter, Ctrl-D) keeps the trailing newline, and curl then dies with
+          # "URL rejected: Malformed input to a URL function" and no useful annotation.
+          hook="$(printf '%s' "${RENDER_DEPLOY_HOOK_URL}" | tr -d '[:space:]')"
+
+          # The trimmed value is a different string from the registered secret, so
+          # GitHub's automatic masking would not cover it. Register it explicitly.
+          echo "::add-mask::${hook}"
+
+          case "${hook}" in
+            https://*key=*) ;;
+            *)
+              echo "::error::RENDER_DEPLOY_HOOK_URL is not a Render deploy hook URL. It must look like https://api.render.com/deploy/srv-XXXX?key=YYYY — copy it whole from Render > nudge-ai > Settings > Deploy Hook."
+              exit 1
+              ;;
+          esac
+
+          # The hook URL normally already carries ?key=..., so ref is appended with '&'.
+          # Do not assume it: a URL without a query string would otherwise become
+          # ".../srv-xxx&ref=SHA", one path segment with no key, and come back 401.
+          case "${hook}" in
+            *\?*) sep='&' ;;
+            *) sep='?' ;;
+          esac
+
+          # The URL is only ever read from a variable, never interpolated into a printed
+          # string, and curl runs without -v. Nothing here can echo the key.
+          body="$(mktemp)"
+
+          # Retries are hand-rolled rather than left to `curl --retry`, because --retry
+          # also retries HTTP 408/429/500/502/503/504 — measured, a 500 makes curl send
+          # the POST four times. Triggering a deploy is not idempotent, so a Render 5xx
+          # that arrives *after* the deploy was enqueued would queue up to four deploys
+          # for one push and still end the job red. Only curl exits 6, 7 and 35 (DNS,
+          # connect, TLS handshake) prove the request was never delivered; retry those
+          # and nothing else.
+          #
+          # curl must also not run under `set -e`: a non-zero exit would abort the script
+          # before any branch below runs, printing raw "curl: (7)" noise with no
+          # ::error:: annotation.
+          attempt=1
+          while :; do
+            set +e
+            code="$(curl -sS -X POST --max-time 30 \
+              -o "$body" -w '%{http_code}' \
+              "${hook}${sep}ref=${GITHUB_SHA}")"
+            curl_rc=$?
+            set -e
+
+            [ "${curl_rc}" -eq 0 ] && break
+
+            case "${curl_rc}" in
+              6 | 7 | 35)
+                if [ "${attempt}" -ge 3 ]; then
+                  echo "::error::Could not reach the Render deploy hook after ${attempt} attempts (curl exit ${curl_rc}). Nothing was deployed. Check https://status.render.com, then re-run this job."
+                  exit 1
+                fi
+                echo "Attempt ${attempt} could not connect (curl exit ${curl_rc}); retrying in 5s."
+                attempt=$((attempt + 1))
+                sleep 5
+                ;;
+              *)
+                echo "::error::The deploy hook request failed (curl exit ${curl_rc}). It may or may not have reached Render — check the Render deploy list before re-running this job."
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Render responded HTTP ${code}"
+          cat "$body"
+          echo
+
+          # curl was deliberately not given -f: without an explicit check it exits 0 on
+          # 401, 404, 409 and 500 alike, which would paint the job green with no deploy.
+          # (--retry does still retry 5xx, so a 500 arrives here after ~15s of attempts.)
+          case "${code}" in
+            200)
+              echo "Deploy started for ${GITHUB_SHA}."
+              ;;
+            201 | 202)
+              echo "Deploy queued for ${GITHUB_SHA} behind an in-progress deploy."
+              ;;
+            401 | 403)
+              echo "::error::${code} — Render rejected the deploy hook key. It was probably regenerated. Copy the current hook URL from Render > nudge-ai > Settings > Deploy Hook into the RENDER_DEPLOY_HOOK_URL secret."
+              exit 1
+              ;;
+            404)
+              echo "::error::404 — Render could not find the service, or could not find commit ${GITHUB_SHA} in its linked repository."
+              exit 1
+              ;;
+            409)
+              echo "::error::409 — the Render service is suspended or otherwise cannot accept deploys."
+              exit 1
+              ;;
+            *)
+              echo "::error::Render deploy hook returned an unexpected HTTP ${code}. Check the Render deploy list before re-running this job — a 5xx can also mean the deploy was accepted and only the response was lost."
+              exit 1
+              ;;
+          esac
