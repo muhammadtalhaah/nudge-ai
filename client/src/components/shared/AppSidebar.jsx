@@ -7,7 +7,7 @@
  */
 
 import { useMemo, useRef } from 'react';
-import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, NavLink, useLocation, useSearchParams } from 'react-router-dom';
 import { CalendarDays, MessageSquare, Plus } from 'lucide-react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -48,7 +48,6 @@ const GROUPS = [
 
 const AppSidebar = () => {
   const location = useLocation();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { closeSidebar } = useLayout();
 
@@ -89,19 +88,6 @@ const AppSidebar = () => {
     [sessions],
   );
 
-  /**
-   * Starting a conversation creates nothing.
-   *
-   * It navigates to the chat with no `?session=`, which the page reads as a blank thread. The
-   * record is written when there is a first message to put in it — clicking this used to
-   * persist a conversation immediately, so anyone who clicked it and then thought better of it
-   * left an empty row in the sidebar forever.
-   */
-  const handleNewConversation = () => {
-    navigate(ROUTES.CHAT);
-    closeSidebar();
-  };
-
   return (
     // The surface is set here rather than only on the desktop <aside>, so the sticky group
     // headings below have the same colour to sit on inside the mobile drawer too.
@@ -115,9 +101,23 @@ const AppSidebar = () => {
       </div>
 
       <div className="px-3 pt-2 pb-3">
-        <Button className="w-full justify-start text-white" onClick={handleNewConversation}>
-          <Plus className="size-4" aria-hidden="true" />
-          New Chat
+        {/*
+          A link rather than a button, so the assistant opens in a new tab on cmd-click, on
+          middle-click, and from the context menu — the same as every other destination in this
+          sidebar. `asChild` hands Button's styling to the anchor, so nothing about how it looks
+          changes; what changes is that the browser now knows this goes somewhere.
+
+          Starting a conversation still creates nothing. This points at the chat with no
+          `?session=`, which the page reads as a blank thread, and the record is written when
+          there is a first message to put in it. Clicking it used to persist a conversation
+          immediately, so anyone who clicked and thought better of it left an empty row in the
+          sidebar forever.
+        */}
+        <Button asChild className="w-full justify-start text-white">
+          <Link to={ROUTES.CHAT} onClick={closeSidebar}>
+            <Plus className="size-4" aria-hidden="true" />
+            New Chat
+          </Link>
         </Button>
       </div>
 
