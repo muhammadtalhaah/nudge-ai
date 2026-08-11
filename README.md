@@ -481,16 +481,43 @@ chat prose said "10:00" above a card reading "15:00".
 
 ## Deployment
 
-The repo is deploy-ready but **not yet deployed** — that needs the account credentials.
+Live at **https://nudge-ai-n662.onrender.com**, deployed from `main` by GitHub Actions.
 
-**Render** (blueprint included):
+**How a push reaches production.**
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) runs on every push to `main`: it
+installs, builds the client and runs the client suite, then — only if that passed — POSTs
+Render's deploy hook with the commit SHA it just verified. Render's GitHub App link stopped
+delivering push events for this repo, so the hook is the deploy path rather than Render's own
+auto-deploy. `workflow_dispatch` redeploys the current tip without inventing a commit.
 
-1. Push the repo.
-2. Render → New → Blueprint → point at this repo. `render.yaml` provisions the web service
-   and a managed Postgres, and generates the JWT secrets.
-3. Once live: `npm run db:setup` and `npm run db:seed` against `DATABASE_URL` (Render shell,
-   or locally with the external connection string).
-4. Optionally set `MISTRAL_API_KEY` in the dashboard to enable the real model.
+That workflow needs **one repository secret**. Without it the deploy job fails immediately,
+which is why a push can show a green build next to a red deploy:
+
+| Secret                   | Where to get it                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `RENDER_DEPLOY_HOOK_URL` | Render → **nudge-ai** → Settings → **Deploy Hook**. Copy the whole URL, including its `?key=…`. |
+
+Add it under **Settings → Secrets and variables → Actions → New repository secret**, or:
+
+```bash
+gh secret set RENDER_DEPLOY_HOOK_URL --repo <owner>/nudge-ai
+```
+
+The job errors rather than skipping when the secret is absent — a green check that quietly
+deployed nothing is the worse failure. Regenerating the hook in Render invalidates the stored
+value; the job then reports `401` and the fix is to re-copy it.
+
+**First-time setup from scratch** (blueprint included):
+
+1. Render → New → Blueprint → point at this repo. `render.yaml` provisions the web service and
+   a managed Postgres, and generates the JWT secrets.
+2. Add the `RENDER_DEPLOY_HOOK_URL` secret above, so pushes to `main` deploy.
+3. Optionally set `MISTRAL_API_KEY` in the dashboard to enable the real model. Left unset, the
+   app runs its deterministic offline assistant rather than failing to boot.
+
+The schema needs no manual step: `startCommand` runs `npm run db:deploy` before `npm start`,
+applying [db/schema.sql](db/schema.sql) and re-applying the tenant fixtures idempotently on
+each boot — including after every free-plan spin-down.
 
 **Docker** anywhere else:
 
