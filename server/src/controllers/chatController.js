@@ -49,8 +49,16 @@ export const createSession = async (req, res) => {
 };
 
 export const listSessions = async (req, res) => {
-  const sessions = await chatService.listSessions(callerFrom(req));
-  sendData(res, { sessions: sessions.map(toSessionView) });
+  const queryParams = req.query;
+
+  const { items, nextCursor } = await chatService.listSessions(callerFrom(req), {
+    limit: queryParams.limit,
+    cursor: queryParams.cursor,
+  });
+
+  // `nextCursor: null` is the end of the list, said explicitly. A client cannot infer it from
+  // a short page — a page can be short because rows moved while it was being read.
+  sendData(res, { sessions: items.map(toSessionView), nextCursor });
 };
 
 export const listMessages = async (req, res) => {

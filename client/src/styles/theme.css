@@ -7,9 +7,14 @@
  *  consume the semantic tokens below, so a new palette / typography / radius spec can be
  *  dropped in here without editing a single component.
  *
- *  Values are currently shadcn/ui's default "neutral" base, which is deliberate: the
- *  assessment brief states branding polish is not evaluated, and the final palette is
- *  still to be supplied.
+ *  The palette is the supplied design reference: near-black layered greys with a single
+ *  vivid orange accent, hairline borders rather than shadows, and generous corner radii.
+ *  Every value below was measured off that reference rather than eyeballed — the hex it
+ *  came from is in the comment beside it.
+ *
+ *  Dark is the reference and is exact. Light is a derived counterpart: the same accent and
+ *  the same layering logic inverted, so the theme toggle keeps working rather than being
+ *  quietly abandoned by a dark-only redesign.
  *
  *  To restyle:
  *    1. Replace the oklch() values in :root and .dark.
@@ -23,40 +28,51 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* One radius drives the whole scale below. */
-  --radius: 0.625rem;
+  /* One radius drives the whole scale below. The reference is soft-cornered throughout. */
+  --radius: 0.75rem;
 
   /* Surfaces and text */
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --foreground: oklch(0.22 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.22 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.22 0 0);
 
-  /* Brand — replace these two pairs first when the palette arrives. */
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
+  /**
+   * The accent, measured from the reference's send control (#FF5F2E).
+   *
+   * Its foreground is near-black, not white, and that is a measurement rather than a taste:
+   * white on this orange is 3.03:1, which fails AA for the button labels that sit on it.
+   * Near-black is 6.11:1 on the same fill. The colour people see is the reference's; only
+   * what sits on top of it was chosen for legibility.
+   */
+  --primary: oklch(61.852% 0.16067 42.82);
+  --primary-foreground: oklch(0.19 0.015 40);
 
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.946 0 0); /* #EDEDED */
+  --secondary-foreground: oklch(0.22 0 0);
 
-  --destructive: oklch(0.577 0.245 27.325);
+  --muted: oklch(0.968 0 0);
+  --muted-foreground: oklch(0.53 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.22 0 0);
+
+  --destructive: oklch(0.577 0.245 20);
   --destructive-foreground: oklch(0.985 0 0);
 
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: oklch(0.916 0 0); /* #E3E3E3 — hairline, no shadows anywhere */
+  --input: oklch(0.916 0 0);
+  /* Focus lands on the accent, so keyboard focus is unmistakably part of the same system. */
+  --ring: oklch(0.689 0.204 37);
 
   /* Appointment status. Semantic on purpose — a status colour is never written inline,
      it is looked up by status through AppStatusBadge. Every status also carries an icon
      and a text label so colour is never the only signal (WCAG 1.4.1). */
-  --status-pending: oklch(0.75 0.15 80);
-  --status-pending-foreground: oklch(0.25 0.05 80);
+  /* Pushed to yellow, away from the 37° brand orange — a "pending" chip that reads as the
+     accent colour looks like branding rather than a state. */
+  --status-pending: oklch(0.78 0.14 95);
+  --status-pending-foreground: oklch(0.25 0.05 95);
   --status-confirmed: oklch(0.65 0.15 155);
   --status-confirmed-foreground: oklch(0.22 0.05 155);
   --status-cancelled: oklch(0.6 0.2 25);
@@ -67,15 +83,16 @@
   --status-no-show-foreground: oklch(0.98 0 0);
 
   /* Sidebar. A distinct surface from --background so the navigation reads as chrome rather
-     than page content; light mode nudges it slightly grey, dark mode slightly lighter. */
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+     than page content — in the reference it is the *darker* of the two, and light mode
+     mirrors that by making it the greyer one. */
+  --sidebar: oklch(0.982 0 0); /* #F9F9F9 */
+  --sidebar-foreground: oklch(0.22 0 0);
+  --sidebar-primary: oklch(0.689 0.204 37);
+  --sidebar-primary-foreground: oklch(0.19 0.015 40);
+  --sidebar-accent: oklch(0.932 0 0);
+  --sidebar-accent-foreground: oklch(0.22 0 0);
+  --sidebar-border: oklch(0.916 0 0);
+  --sidebar-ring: oklch(0.689 0.204 37);
 
   /* Charts (unused in this prototype's scope, kept so the token set is complete). */
   --chart-1: oklch(0.646 0.222 41.116);
@@ -85,30 +102,45 @@
   --chart-5: oklch(0.769 0.188 70.08);
 }
 
+/**
+ * The reference, measured.
+ *
+ * Four greys do all the work, and the order they sit in is the visual hierarchy: the sidebar
+ * is the deepest, the page sits on top of it, and anything interactive or containing — a
+ * message bubble, the composer, a selected row — is raised one more step. There are no
+ * shadows; separation is a hairline border or a step in this ladder, never both.
+ */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
+  --background: oklch(0.248 0 0); /* #212121 */
+  --foreground: oklch(0.943 0 0); /* #ECECEC */
 
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+  /* One step up from the page, so a card reads as raised without a shadow. */
+  --card: oklch(0.262 0 0);
+  --card-foreground: oklch(0.943 0 0);
+  --popover: oklch(0.285 0 0); /* #2A2A2A — floats above everything */
+  --popover-foreground: oklch(0.943 0 0);
 
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* Identical in both themes: the accent is the constant the rest of the palette moves
+     around. See the note in :root for why its foreground is dark. */
+  --primary: oklch(0.689 0.204 37);
+  --primary-foreground: oklch(0.19 0.015 40);
 
-  --destructive: oklch(0.704 0.191 22.216);
+  /* #303030 — the raised surface: user bubbles, the composer, the selected conversation. */
+  --secondary: oklch(0.309 0 0);
+  --secondary-foreground: oklch(0.943 0 0);
+
+  --muted: oklch(0.309 0 0);
+  --muted-foreground: oklch(0.71 0 0); /* ~#9F9F9F, 6.6:1 on the sidebar */
+  --accent: oklch(0.285 0 0); /* #2A2A2A — the hover step, below selected */
+  --accent-foreground: oklch(0.943 0 0);
+
+  --destructive: oklch(0.704 0.191 18);
   --destructive-foreground: oklch(0.985 0 0);
 
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 18%);
-  --ring: oklch(0.556 0 0);
+  /* Hairlines. The reference separates surfaces with 8% white and nothing else. */
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.689 0.204 37);
 
   /*
    * Status colours are lifted in dark mode to hold contrast against a dark surface.
@@ -120,8 +152,8 @@
    * light. Naming them "foreground" invites the solid-fill reading — if a solid chip is ever
    * introduced it needs its own token rather than borrowing these.
    */
-  --status-pending: oklch(0.82 0.15 80);
-  --status-pending-foreground: oklch(0.88 0.13 80);
+  --status-pending: oklch(0.85 0.14 95);
+  --status-pending-foreground: oklch(0.9 0.12 95);
   --status-confirmed: oklch(0.75 0.16 155);
   --status-confirmed-foreground: oklch(0.86 0.14 155);
   --status-cancelled: oklch(0.68 0.19 25);
@@ -131,14 +163,15 @@
   --status-no-show: oklch(0.7 0.02 0);
   --status-no-show-foreground: oklch(0.87 0.01 0);
 
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.922 0 0);
-  --sidebar-primary-foreground: oklch(0.205 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Deeper than the page, which is what makes the navigation read as chrome. */
+  --sidebar: oklch(0.209 0 0); /* #181818 */
+  --sidebar-foreground: oklch(0.943 0 0);
+  --sidebar-primary: oklch(0.689 0.204 37);
+  --sidebar-primary-foreground: oklch(0.19 0.015 40);
+  --sidebar-accent: oklch(0.285 0 0);
+  --sidebar-accent-foreground: oklch(0.943 0 0);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.689 0.204 37);
 
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);

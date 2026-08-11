@@ -33,6 +33,17 @@ if (!window.ResizeObserver) {
   };
 }
 
+// Also absent from jsdom, and used by the infinite-scroll sentinel. Inert by default so any
+// component carrying one simply never loads a second page; a test that cares about that
+// installs its own and drives the callback.
+if (!window.IntersectionObserver) {
+  window.IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Radix uses these for focus containment in dialogs and selects.
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};

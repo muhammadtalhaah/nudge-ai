@@ -6,7 +6,7 @@
  * rather than a duplicated mobile copy that drifts.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CalendarDays, MessageSquare, Plus } from 'lucide-react';
 
@@ -15,17 +15,20 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/config/constants';
 import { useChatSessions, useCreateChatSession } from '@/hooks/useChatSessions';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useLayout } from '@/context/LayoutContext';
 import { cn } from '@/lib/utils';
 import { recencyBucket } from '@/utils/formatDate';
 
-const NAV_ITEMS = [
-  { to: ROUTES.CHAT, label: 'Assistant', icon: MessageSquare },
-  { to: ROUTES.APPOINTMENTS, label: 'Appointments', icon: CalendarDays },
-];
-
-/** How many conversations the list shows before it stops. */
-const VISIBLE_SESSIONS = 12;
+/**
+ * The chat itself is not listed here.
+ *
+ * "New Chat" starts one and every row in the history below opens one, so a nav link pointing
+ * at the same place was a third route to somewhere the sidebar already goes twice — and it sat
+ * permanently selected on the app's default screen, which made the highlight mean nothing. The
+ * brand link still returns to the assistant from anywhere.
+ */
+const NAV_ITEMS = [{ to: ROUTES.APPOINTMENTS, label: 'Appointments', icon: CalendarDays }];
 
 /**
  * Recency headings, in order.
@@ -52,24 +55,40 @@ const AppSidebar = () => {
   const activeSessionId = searchParams.get('session');
   const isOnChat = location.pathname === ROUTES.CHAT;
 
-  const { data: sessions, isPending, isError } = useChatSessions();
+  const { sessions, isPending, isError, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    useChatSessions();
   const createSession = useCreateChatSession();
 
   /**
-   * The visible slice, bucketed by recency. Empty buckets are dropped so a heading never
-   * appears without rows under it.
+   * The list scrolls inside this panel rather than the page, so it is the observer's root —
+   * with the viewport instead, the sentinel's visibility answers a question about the wrong
+   * box.
    */
-  const grouped = useMemo(() => {
-    const visible = (sessions ?? []).slice(0, VISIBLE_SESSIONS);
+  const scrollRef = useRef(null);
 
-    return GROUPS.map(({ key, label }) => ({
-      key,
-      label,
-      items: visible.filter(
-        (session) => recencyBucket(session.lastMessageAt ?? session.createdAt) === key,
-      ),
-    })).filter((group) => group.items.length > 0);
-  }, [sessions]);
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: fetchNextPage,
+    // Not while a page is already on its way: the sentinel stays on screen until the new rows
+    // push it down, and every intersection until then would ask for the same page again.
+    enabled: hasNextPage && !isFetchingNextPage,
+    rootRef: scrollRef,
+  });
+
+  /**
+   * Everything loaded so far, bucketed by recency. Empty buckets are dropped so a heading
+   * never appears without rows under it.
+   */
+  const grouped = useMemo(
+    () =>
+      GROUPS.map(({ key, label }) => ({
+        key,
+        label,
+        items: sessions.filter(
+          (session) => recencyBucket(session.lastMessageAt ?? session.createdAt) === key,
+        ),
+      })).filter((group) => group.items.length > 0),
+    [sessions],
+  );
 
   /**
    * Starting a conversation from the sidebar navigates to it by URL rather than reaching into
@@ -100,12 +119,12 @@ const AppSidebar = () => {
 
       <div className="px-3 pt-2 pb-3">
         <Button
-          className="w-full justify-start"
+          className="w-full justify-start text-white"
           onClick={handleNewConversation}
           disabled={createSession.isPending}
         >
           <Plus className="size-4" aria-hidden="true" />
-          {createSession.isPending ? 'Starting…' : 'New conversation'}
+          {createSession.isPending ? 'Starting…' : 'New Chat'}
         </Button>
       </div>
 
@@ -122,7 +141,11 @@ const AppSidebar = () => {
               cn(
                 buttonVariants({ variant: isActive ? 'secondary' : 'ghost' }),
                 'w-full justify-start',
-                !isActive && 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
+                // Sidebar tokens rather than the page's: this sits on the darker of the two
+                // surfaces, so a hover tuned against the page barely registers here.
+                isActive && 'bg-sidebar-accent text-sidebar-accent-foreground',
+                !isActive &&
+                  'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
               )
             }
           >
@@ -136,7 +159,7 @@ const AppSidebar = () => {
 
       {/* Recent conversations. Scrolls independently so the navigation above stays reachable. */}
       <nav aria-label="Recent conversations" className="flex min-h-0 flex-1 flex-col pt-3">
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
           {isPending ? (
             <div className="space-y-2" aria-busy="true">
               <span className="sr-only">Loading conversations</span>
@@ -155,7 +178,7 @@ const AppSidebar = () => {
               <section key={group.key} className="mb-3 last:mb-0">
                 {/* Sticky so the heading stays legible while its own group is being scrolled
                     past — otherwise the dates are only readable at rest. */}
-                <h2 className="bg-sidebar text-muted-foreground/80 sticky top-0 z-10 px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase">
+                <h2 className="bg-sidebar text-muted-foreground sticky top-0 z-10 px-3 py-1.5 text-xs font-medium">
                   {group.label}
                 </h2>
 
@@ -177,10 +200,10 @@ const AppSidebar = () => {
                           aria-current={isActive ? 'page' : undefined}
                           title={session.title || 'New conversation'}
                           className={cn(
-                            'block truncate rounded-md px-3 py-1.5 text-sm transition-colors',
+                            'block truncate rounded-lg px-3 py-2 text-sm transition-colors',
                             isActive
-                              ? 'bg-secondary text-secondary-foreground font-medium'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
+                              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                              : 'text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-foreground',
                           )}
                         >
                           {session.title || 'New conversation'}
@@ -193,11 +216,21 @@ const AppSidebar = () => {
             ))
           )}
 
-          {sessions?.length > VISIBLE_SESSIONS ? (
-            <p className="text-muted-foreground/70 px-3 pt-2 text-xs">
-              Showing the {VISIBLE_SESSIONS} most recent.
-            </p>
+          {/*
+            The end of the list, and the trigger for the next page. It is rendered only while
+            more exist, so reaching the bottom of a complete list observes nothing.
+          */}
+          {hasNextPage ? (
+            <div ref={sentinelRef} className="px-3 pt-2" aria-hidden="true">
+              {isFetchingNextPage ? <Skeleton className="h-9 w-full" /> : null}
+            </div>
           ) : null}
+
+          {/* Announced rather than shown: the skeleton above is decorative, and a screen
+              reader needs to be told the list grew under it. */}
+          <p aria-live="polite" className="sr-only">
+            {isFetchingNextPage ? 'Loading more conversations' : ''}
+          </p>
         </div>
       </nav>
     </div>

@@ -131,6 +131,27 @@ export const sendMessageSchema = z.object({
     .max(LIMITS.MESSAGE_MAX_LENGTH, `Keep it under ${LIMITS.MESSAGE_MAX_LENGTH} characters`),
 });
 
+/**
+ * The conversation list is paginated by cursor rather than by page number.
+ *
+ * Page numbers assume a stable ordering, and this list has the opposite: it is ordered by most
+ * recent activity, which changes every time the open conversation receives a message. By the
+ * time someone scrolls to page two, page one has reshuffled underneath them, so an offset
+ * returns rows they have already seen and skips ones they have not. A cursor names a position
+ * in the ordering instead of counting from the top, so it stays correct while the list moves.
+ */
+export const chatSessionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(LIMITS.PAGE_SIZE_MAX).default(20),
+  // Opaque to the client; the shape below is what it must decode to.
+  cursor: z.string().trim().min(1).max(400).optional(),
+});
+
+/** The decoded contents of a conversation-list cursor: the last row of the previous page. */
+export const chatSessionCursorSchema = z.object({
+  activityAt: isoDateTimeSchema,
+  id: z.uuid(),
+});
+
 /* -------------------------------------------------- AI extraction output ---- */
 
 /**

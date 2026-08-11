@@ -8,7 +8,9 @@
 import { ENDPOINTS, sessionMessagesPath } from './endpoints';
 import { request } from './client';
 
-const listSessions = () => request('get', ENDPOINTS.CHAT_SESSIONS);
+/** @param {{ cursor?: string, limit?: number }} [params] Omit the cursor for the first page. */
+/** @param {{ cursor?: string, limit?: number }} [params] Omit the cursor for the first page. */
+const listSessions = (params) => request('get', ENDPOINTS.CHAT_SESSIONS, params);
 const createSession = (payload = {}) => request('post', ENDPOINTS.CHAT_SESSIONS, payload);
 const listMessages = (sessionId) => request('get', sessionMessagesPath(sessionId));
 const sendMessage = (sessionId, payload) =>

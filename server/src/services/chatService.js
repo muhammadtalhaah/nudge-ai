@@ -16,19 +16,21 @@
  */
 
 import { BOOKING_FIELDS, CHAT_INTENTS, CHAT_ROLES, REPLY_KIND } from '../../../shared/constants.js';
+import { chatSessionCursorSchema } from '../../../shared/schemas.js';
 
 import { extract, getProvider } from '../ai/extraction.js';
 import { zonedDateTimeToUtc } from '../ai/naturalDate.js';
 import { buildSystemPrompt } from '../ai/prompts.js';
 import { env } from '../config/env.js';
 import { pool, withTransaction } from '../db/pool.js';
-import { AppError, NotFoundError } from '../errors/AppError.js';
+import { AppError, NotFoundError, ValidationError } from '../errors/AppError.js';
 import { aiLogger } from '../logger/index.js';
 import aiLogRepository from '../repositories/aiLogRepository.js';
 import appointmentRepository from '../repositories/appointmentRepository.js';
 import businessRepository from '../repositories/businessRepository.js';
 import chatRepository from '../repositories/chatRepository.js';
 import providerRepository from '../repositories/providerRepository.js';
+import { decodeCursor, encodeCursor } from '../utils/cursor.js';
 import appointmentService from './appointmentService.js';
 
 /**
@@ -87,9 +89,46 @@ export const createSession = async (caller, title) =>
     title: title ?? null,
   });
 
-/** @param {import('./appointmentService.js').Caller} caller */
-export const listSessions = async (caller) =>
-  chatRepository.listSessionsForUser(pool, caller.userId);
+/**
+ * One page of the caller's conversations.
+ *
+ * The cursor arrives as opaque text from a client and is treated as untrusted input: decoded,
+ * schema-checked, and rejected as a bad request if it is neither. It carries no authority
+ * either way — the rows are scoped to `caller.userId` regardless of what it says, so a forged
+ * cursor can at most name a position in someone's own list.
+ *
+ * @param {import('./appointmentService.js').Caller} caller
+ * @param {{ limit?: number, cursor?: string }} [options]
+ * @returns {Promise<{ items: object[], nextCursor: string | null }>}
+ */
+export const listSessions = async (caller, options = {}) => {
+  let after = null;
+
+  if (options.cursor) {
+    const decoded = decodeCursor(options.cursor);
+    const parsed = decoded ? chatSessionCursorSchema.safeParse(decoded) : null;
+
+    if (!parsed?.success) {
+      throw new ValidationError('The request contains invalid data', [
+        { path: 'cursor', message: 'Not a valid cursor' },
+      ]);
+    }
+
+    after = { activityAt: new Date(parsed.data.activityAt), id: parsed.data.id };
+  }
+
+  const { items, nextCursor } = await chatRepository.listSessionsForUser(pool, caller.userId, {
+    limit: options.limit,
+    after,
+  });
+
+  return {
+    items,
+    nextCursor: nextCursor
+      ? encodeCursor({ activityAt: nextCursor.activityAt.toISOString(), id: nextCursor.id })
+      : null,
+  };
+};
 
 /**
  * Load a session, enforcing ownership.

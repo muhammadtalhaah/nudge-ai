@@ -110,7 +110,7 @@ const AppLayout = () => {
                     </span>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void logout()}>
+                  <DropdownMenuItem onSelect={() => void logout()} className={'cursor-pointer'}>
                     <LogOut aria-hidden="true" />
                     Sign out
                   </DropdownMenuItem>

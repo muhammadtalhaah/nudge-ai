@@ -1029,6 +1029,150 @@ describe('session ownership', () => {
   });
 });
 
+/**
+ * The conversation list is a scrolling sidebar, so it pages by cursor rather than by number.
+ *
+ * The ordering it pages through is the thing that moves — every message reorders it — so the
+ * cases that matter are the ones where the list changes between requests. An offset would get
+ * those wrong by construction, and silently.
+ */
+describe('paging through conversations', () => {
+  /** Sessions are created oldest-first, so the last one made is the first one listed. */
+  const seedSessions = async (count) => {
+    const ids = [];
+    for (let index = 0; index < count; index += 1) {
+      ids.push(await newSession(accessToken));
+    }
+    return ids;
+  };
+
+  const listSessions = (token, query = '') =>
+    request(app)
+      .get(`/api/chat/sessions${query}`)
+      .set({ Authorization: `Bearer ${token}` })
+      .expect(200);
+
+  it('returns a page and a cursor, and stops when the list ends', async () => {
+    await seedSessions(5);
+
+    const first = await listSessions(accessToken, '?limit=2');
+    expect(first.body.data.sessions).toHaveLength(2);
+    expect(first.body.data.nextCursor).toBeTruthy();
+
+    const second = await listSessions(
+      accessToken,
+      `?limit=2&cursor=${encodeURIComponent(first.body.data.nextCursor)}`,
+    );
+    expect(second.body.data.sessions).toHaveLength(2);
+
+    const third = await listSessions(
+      accessToken,
+      `?limit=2&cursor=${encodeURIComponent(second.body.data.nextCursor)}`,
+    );
+    expect(third.body.data.sessions).toHaveLength(1);
+    // The last page says so, rather than leaving the client to infer it from a short page.
+    expect(third.body.data.nextCursor).toBeNull();
+  });
+
+  it('walks the whole list exactly once', async () => {
+    const created = await seedSessions(7);
+
+    const seen = [];
+    let cursor = null;
+
+    do {
+      const query = cursor ? `?limit=3&cursor=${encodeURIComponent(cursor)}` : '?limit=3';
+      const response = await listSessions(accessToken, query);
+      seen.push(...response.body.data.sessions.map((session) => session.id));
+      cursor = response.body.data.nextCursor;
+    } while (cursor);
+
+    expect(seen).toHaveLength(created.length);
+    expect(new Set(seen).size).toBe(created.length);
+    // Newest first, which is the reverse of the order they were created in.
+    expect(seen).toEqual([...created].reverse());
+  });
+
+  /**
+   * The case an offset cannot survive. Sending a message moves that conversation to the top,
+   * so `OFFSET 3` would step over a row that has shifted down into the slot already read.
+   */
+  it('does not repeat or skip a conversation that moves while it is being read', async () => {
+    const created = await seedSessions(6);
+
+    const first = await listSessions(accessToken, '?limit=3');
+    const firstIds = first.body.data.sessions.map((session) => session.id);
+
+    // The oldest conversation — on the page not yet fetched — jumps to the top.
+    setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'hello' })));
+    await say(accessToken, created[0], 'hello').expect(201);
+
+    const second = await listSessions(
+      accessToken,
+      `?limit=3&cursor=${encodeURIComponent(first.body.data.nextCursor)}`,
+    );
+    const secondIds = second.body.data.sessions.map((session) => session.id);
+
+    // Nothing already shown comes back a second time.
+    expect(secondIds.filter((id) => firstIds.includes(id))).toEqual([]);
+
+    // And the rows that did not move are all still reachable. The one that jumped is now
+    // above the cursor, which is correct: it has been overtaken by its own new activity.
+    const remaining = created.filter((id) => !firstIds.includes(id) && id !== created[0]);
+    expect(secondIds.sort()).toEqual(remaining.sort());
+  });
+
+  it('puts a brand-new conversation at the top, before it has any messages', async () => {
+    setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'hello' })));
+
+    const older = await newSession(accessToken);
+    await say(accessToken, older, 'hello').expect(201);
+
+    const fresh = await newSession(accessToken);
+
+    const response = await listSessions(accessToken);
+    // Ordering by last_message_at with nulls last sent this one to the bottom — the sidebar
+    // opens it on creation, so it has to be visible where the person is looking.
+    expect(response.body.data.sessions[0].id).toBe(fresh);
+  });
+
+  it('scopes a cursor to the caller', async () => {
+    await seedSessions(3);
+    await newSession(otherAccessToken);
+
+    const mine = await listSessions(accessToken, '?limit=2');
+
+    // Another user's cursor names a position, not a permission: it filters their list, which
+    // is already scoped to them, so it can only ever return fewer of their own rows.
+    const theirs = await listSessions(
+      otherAccessToken,
+      `?limit=5&cursor=${encodeURIComponent(mine.body.data.nextCursor)}`,
+    );
+
+    for (const session of theirs.body.data.sessions) {
+      expect(session.id).not.toBe(mine.body.data.sessions[0].id);
+    }
+  });
+
+  it('rejects a cursor that is not one', async () => {
+    for (const cursor of ['not-base64', btoa('{"nope":true}'), btoa('[]')]) {
+      const response = await request(app)
+        .get(`/api/chat/sessions?cursor=${encodeURIComponent(cursor)}`)
+        .set({ Authorization: `Bearer ${accessToken}` })
+        .expect(422);
+
+      expect(response.body.error.code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('refuses an absurd page size rather than serving it', async () => {
+    await request(app)
+      .get('/api/chat/sessions?limit=5000')
+      .set({ Authorization: `Bearer ${accessToken}` })
+      .expect(422);
+  });
+});
+
 describe('ai interaction logging', () => {
   it('records a successful extraction with token counts', async () => {
     setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'hello' })));

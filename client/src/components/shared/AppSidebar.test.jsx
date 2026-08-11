@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AppSidebar from './AppSidebar';
 import { LayoutProvider } from '@/context/LayoutContext';
@@ -85,8 +85,18 @@ describe('AppSidebar', () => {
 
     const nav = screen.getByRole('navigation', { name: 'Main' });
     expect(nav).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Assistant' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Appointments' })).toBeInTheDocument();
+
+    // The assistant has no nav link of its own: "New Chat" starts one and the history rows
+    // open one, so a third route to the same screen only ever sat permanently selected.
+    expect(screen.queryByRole('link', { name: 'Assistant' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /New Chat/ })).toBeInTheDocument();
+  });
+
+  it('still reaches the assistant from the brand link', async () => {
+    renderSidebar('/appointments');
+
+    expect(screen.getByRole('link', { name: /Nudge AI/ })).toHaveAttribute('href', '/chat');
   });
 
   it('shows a loading state before the conversations arrive', () => {
@@ -141,7 +151,7 @@ describe('AppSidebar', () => {
     });
 
     renderSidebar();
-    await user.click(screen.getByRole('button', { name: /New conversation/ }));
+    await user.click(screen.getByRole('button', { name: /New Chat/ }));
 
     await waitFor(() => {
       expect(screen.getByTestId('location')).toHaveTextContent('/chat?session=session-brand-new');
@@ -174,9 +184,111 @@ describe('AppSidebar', () => {
     });
     renderSidebar();
 
-    // Scoped to the link: "New conversation" is also the button's label, so a bare text query
-    // would be ambiguous and could pass while asserting the wrong element.
+    // Scoped to the link rather than queried as bare text: an untitled row and the button that
+    // creates one are easy to confuse, and a text query could pass on the wrong element.
     const link = await screen.findByRole('link', { name: /New conversation/ });
     expect(link).toHaveAttribute('href', '/chat?session=session-newest');
+  });
+});
+
+/**
+ * Growing the list by scrolling to the end of it.
+ *
+ * jsdom has no layout, so nothing here can scroll for real. What is testable — and what
+ * actually breaks — is the wiring: that a page is requested when the sentinel is seen, that
+ * the cursor from the previous page is the one sent, and that a list which has ended stops
+ * asking. The observer is stubbed and its callback invoked by hand to stand in for the scroll.
+ */
+describe('loading more conversations on scroll', () => {
+  /** The observers the component created, so a test can decide when the sentinel is seen. */
+  let observers;
+
+  const page = (sessions, nextCursor = null) => ({
+    ok: true,
+    data: { sessions, nextCursor },
+    meta: null,
+  });
+
+  const olderSession = (id) => ({
+    id,
+    title: `Conversation ${id}`,
+    status: 'active',
+    messageCount: 2,
+    lastMessageAt: new Date(Date.now() - 200_000_000).toISOString(),
+    createdAt: new Date(Date.now() - 200_000_000).toISOString(),
+  });
+
+  /** Fire every live observer as though its target had scrolled into view. */
+  const scrollToEnd = async (target) => {
+    for (const observer of observers) {
+      observer.callback([{ isIntersecting: true, target }]);
+    }
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2));
+  };
+
+  beforeEach(() => {
+    observers = [];
+
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback) {
+          this.callback = callback;
+          observers.push(this);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {
+          observers = observers.filter((entry) => entry !== this);
+        }
+      },
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('requests the next page with the cursor the last one returned', async () => {
+    listSessions
+      .mockResolvedValueOnce(page(SESSIONS, 'cursor-from-page-one'))
+      .mockResolvedValueOnce(page([olderSession('session-oldest')]));
+
+    renderSidebar();
+    await screen.findByText('Itchy rash on my arm');
+
+    // The first request asks for the top of the list, with no cursor.
+    expect(listSessions).toHaveBeenCalledWith({ cursor: undefined, limit: 20 });
+
+    await scrollToEnd(document.body);
+
+    expect(listSessions).toHaveBeenLastCalledWith({ cursor: 'cursor-from-page-one', limit: 20 });
+  });
+
+  it('appends the next page rather than replacing what is shown', async () => {
+    listSessions
+      .mockResolvedValueOnce(page(SESSIONS, 'cursor-from-page-one'))
+      .mockResolvedValueOnce(page([olderSession('session-oldest')]));
+
+    renderSidebar();
+    await screen.findByText('Itchy rash on my arm');
+
+    await scrollToEnd(document.body);
+
+    expect(await screen.findByText('Conversation session-oldest')).toBeInTheDocument();
+    // Still there — an infinite list grows, it does not page over itself.
+    expect(screen.getByText('Itchy rash on my arm')).toBeInTheDocument();
+    expect(screen.getByText('Cardiology follow-up')).toBeInTheDocument();
+  });
+
+  it('asks for nothing more once the server says the list has ended', async () => {
+    listSessions.mockResolvedValue(page(SESSIONS, null));
+
+    renderSidebar();
+    await screen.findByText('Itchy rash on my arm');
+
+    // No cursor means no sentinel to observe, so reaching the bottom triggers nothing.
+    expect(observers).toHaveLength(0);
+    expect(listSessions).toHaveBeenCalledTimes(1);
   });
 });

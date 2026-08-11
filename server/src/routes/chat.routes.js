@@ -7,7 +7,12 @@
 
 import { Router } from 'express';
 
-import { createSessionSchema, idParamSchema, sendMessageSchema } from '../../../shared/schemas.js';
+import {
+  chatSessionListQuerySchema,
+  createSessionSchema,
+  idParamSchema,
+  sendMessageSchema,
+} from '../../../shared/schemas.js';
 
 import chatController from '../controllers/chatController.js';
 import { chatRateLimit } from '../middlewares/rateLimit.js';
@@ -26,7 +31,11 @@ router.post(
   chatController.createSession,
 );
 
-router.get('/chat/sessions', chatController.listSessions);
+router.get(
+  '/chat/sessions',
+  validate({ query: chatSessionListQuerySchema }),
+  chatController.listSessions,
+);
 
 router.get(
   '/chat/sessions/:id/messages',

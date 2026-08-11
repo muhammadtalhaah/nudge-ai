@@ -53,17 +53,53 @@ export const findSessionById = async (executor, id) => {
   return rows[0] ? toSession(rows[0]) : null;
 };
 
-/** Matches chat_sessions_user_recent_idx. */
-export const listSessionsForUser = async (executor, userId, limit = 30) => {
+/**
+ * One page of a user's conversations, newest activity first.
+ *
+ * Ordered by `COALESCE(last_message_at, created_at)` rather than by `last_message_at` with
+ * nulls last. Two things follow from collapsing it to one non-null key, and both matter:
+ *
+ *   A conversation with no messages yet sorts by when it was created, which puts a
+ *   just-started one at the top where the person who just started it is looking. Under nulls
+ *   last it went to the very bottom — invisible in a list this long, and on the final page
+ *   once that list is paginated.
+ *
+ *   Keyset pagination becomes a single row-value comparison. `(activity, id) < (cursor)` is an
+ *   exact "everything after this row" in the same order the query sorts by, with `id` breaking
+ *   ties so no row can sit on a page boundary and be returned twice or skipped.
+ *
+ * `chat_sessions_user_recent_idx` still serves the `user_id` lookup; the ordering itself is a
+ * small in-memory sort, which is the right trade for a per-user list of this size.
+ *
+ * @param {{ limit: number, after?: { activityAt: Date, id: string } | null }} options
+ * @returns {Promise<{ items: object[], nextCursor: { activityAt: Date, id: string } | null }>}
+ */
+export const listSessionsForUser = async (executor, userId, options = {}) => {
+  const limit = options.limit ?? 30;
+  const after = options.after ?? null;
+
+  // One more than asked for: whether a further page exists is then a fact about this result,
+  // not a guess. Without it the last full page is followed by an empty one, and the scroll
+  // sentinel fires a pointless request to discover the list had already ended.
   const { rows } = await executor.query(
-    `SELECT ${SESSION_COLUMNS}
+    `SELECT ${SESSION_COLUMNS}, COALESCE(last_message_at, created_at) AS activity_at
        FROM chat_sessions
       WHERE user_id = $1
-      ORDER BY last_message_at DESC NULLS LAST, created_at DESC
-      LIMIT $2`,
-    [userId, limit],
+        AND ($2::timestamptz IS NULL
+             OR (COALESCE(last_message_at, created_at), id) < ($2::timestamptz, $3::uuid))
+      ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC
+      LIMIT $4`,
+    [userId, after?.activityAt ?? null, after?.id ?? null, limit + 1],
   );
-  return rows.map(toSession);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page.at(-1);
+
+  return {
+    items: page.map(toSession),
+    nextCursor: hasMore && last ? { activityAt: last.activity_at, id: last.id } : null,
+  };
 };
 
 /**

@@ -93,7 +93,9 @@ const ChatPage = () => {
     <div className="flex h-full min-h-0 flex-col gap-4">
       {/* "New conversation" now lives in the sidebar, alongside the conversation list it
           affects, rather than being duplicated here. */}
-      <div className="shrink-0">
+      {/* Held to the conversation's column so the page reads as one column of content rather
+          than a full-width header sitting above a narrower thread. */}
+      <div className="mx-auto w-full max-w-3xl shrink-0 px-4">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <Sparkles className="text-primary size-5" aria-hidden="true" />
           Assistant
@@ -105,7 +107,7 @@ const ChatPage = () => {
 
       {/* Connection state is surfaced rather than hidden — messages still send over REST. */}
       {isOffline ? (
-        <Alert>
+        <Alert className="mx-auto w-full max-w-3xl">
           <WifiOff className="size-4" aria-hidden="true" />
           <AlertDescription>
             {socketStatus === SOCKET_STATUS.RECONNECTING
@@ -115,7 +117,12 @@ const ChatPage = () => {
         </Alert>
       ) : null}
 
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+      {/*
+        Borderless and transparent: in the reference the conversation is the page, not a panel
+        sitting on it. Card is kept for its layout rather than restyled globally — it still
+        reads as a card everywhere else in the app.
+      */}
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden border-0 bg-transparent p-0 shadow-none">
         {/* aria-live so incoming assistant replies are announced without stealing focus. */}
         {/* A column rather than a plain block so the turns can sit at the bottom: `mt-auto` on
             the list pushes a short conversation down to the composer instead of stranding it at
@@ -129,7 +136,7 @@ const ChatPage = () => {
           aria-label="Conversation"
         >
           {isBootstrapping ? (
-            <div className="mt-auto space-y-4" aria-busy="true">
+            <div className="mx-auto mt-auto w-full max-w-3xl space-y-6" aria-busy="true">
               <span className="sr-only">Loading your conversation</span>
               <Skeleton className="h-12 w-3/5" />
               <Skeleton className="ml-auto h-12 w-2/5" />
@@ -167,7 +174,9 @@ const ChatPage = () => {
               </EmptyContent>
             </Empty>
           ) : (
-            <div className="mt-auto space-y-4">
+            // A measured column rather than the full width of the page: long assistant replies
+            // are now unbubbled, so line length is what keeps them readable.
+            <div className="mx-auto mt-auto w-full max-w-3xl space-y-6">
               {messages.map((message) => (
                 <ChatMessage key={message.id} message={message} />
               ))}
@@ -196,7 +205,15 @@ const ChatPage = () => {
           </div>
         ) : null}
 
-        <ChatComposer onSend={sendMessage} disabled={isBootstrapping} isSending={isAwaitingReply} />
+        {/* Held to the same column as the conversation above it, so the composer lines up with
+            the messages rather than spanning a width nothing else uses. */}
+        <div className="mx-auto w-full max-w-3xl">
+          <ChatComposer
+            onSend={sendMessage}
+            disabled={isBootstrapping}
+            isSending={isAwaitingReply}
+          />
+        </div>
       </Card>
     </div>
   );

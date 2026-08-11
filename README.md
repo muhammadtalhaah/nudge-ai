@@ -170,6 +170,13 @@ dropped while the rest survives — a taken 10:00 forgets the time and keeps the
 
 Conversations are listed in the sidebar and selected **by URL** (`/chat?session=<id>`), so switching threads, reloading, and sharing a link all reopen the same conversation — including its stored rich payloads.
 
+The sidebar list loads a page at a time and grows as it is scrolled, via an
+`IntersectionObserver` on a sentinel at the end of the list. It pages by **cursor**, not by
+page number, because the ordering it pages through is the one thing guaranteed to move:
+every message sends its conversation back to the top, so by the time someone scrolls to page
+two an offset would return rows they have already seen and skip ones they have not. A cursor
+names a position in the ordering instead of counting from the top.
+
 **Guardrails**, all tested:
 
 | Risk                                        | Mitigation                                                                                                      |
@@ -233,26 +240,26 @@ All routes are under `/api`. Responses use one envelope:
 `details` carries field-level errors, which the client maps back onto the offending form
 input rather than showing a banner.
 
-| Method       | Path                           | Auth   | Notes                                                        |
-| ------------ | ------------------------------ | ------ | ------------------------------------------------------------ |
-| `POST`       | `/auth/signup`                 | —      | Sets the refresh cookie. Role is ignored — always `customer` |
-| `POST`       | `/auth/login`                  | —      | Identical response for wrong password and unknown email      |
-| `POST`       | `/auth/refresh`                | cookie | Rotates the token; replay revokes the whole session family   |
-| `POST`       | `/auth/logout`                 | cookie | Idempotent                                                   |
-| `POST`       | `/auth/logout-all`             | bearer | Also invalidates live access tokens                          |
-| `GET`        | `/auth/me`                     | bearer |                                                              |
-| `GET`        | `/providers`                   | bearer | `?specialty=`                                                |
-| `GET`        | `/providers/specialties`       | bearer |                                                              |
-| `GET`        | `/appointments`                | bearer | `?scope=upcoming\|past\|all&status=&page=&limit=`            |
-| `POST`       | `/appointments`                | bearer | 409 `SLOT_UNAVAILABLE` on overlap                            |
-| `GET`        | `/appointments/:id`            | bearer | 404 for someone else's — not 403                             |
-| `PATCH`      | `/appointments/:id/cancel`     | bearer | Frees the slot                                               |
-| `PATCH`      | `/appointments/:id/reschedule` | bearer | Atomic: old slot released only if the new one is secured     |
-| `GET`        | `/appointments/availability`   | bearer | `?providerId=&date=YYYY-MM-DD`                               |
-| `GET`/`POST` | `/chat/sessions`               | bearer |                                                              |
-| `GET`        | `/chat/sessions/:id/messages`  | bearer | Replays stored rich payloads                                 |
-| `POST`       | `/chat/sessions/:id/messages`  | bearer | REST equivalent of the socket path                           |
-| `GET`        | `/health` · `/ready`           | —      | Liveness; readiness also proves the DB is reachable          |
+| Method       | Path                           | Auth   | Notes                                                           |
+| ------------ | ------------------------------ | ------ | --------------------------------------------------------------- |
+| `POST`       | `/auth/signup`                 | —      | Sets the refresh cookie. Role is ignored — always `customer`    |
+| `POST`       | `/auth/login`                  | —      | Identical response for wrong password and unknown email         |
+| `POST`       | `/auth/refresh`                | cookie | Rotates the token; replay revokes the whole session family      |
+| `POST`       | `/auth/logout`                 | cookie | Idempotent                                                      |
+| `POST`       | `/auth/logout-all`             | bearer | Also invalidates live access tokens                             |
+| `GET`        | `/auth/me`                     | bearer |                                                                 |
+| `GET`        | `/providers`                   | bearer | `?specialty=`                                                   |
+| `GET`        | `/providers/specialties`       | bearer |                                                                 |
+| `GET`        | `/appointments`                | bearer | `?scope=upcoming\|past\|all&status=&page=&limit=`               |
+| `POST`       | `/appointments`                | bearer | 409 `SLOT_UNAVAILABLE` on overlap                               |
+| `GET`        | `/appointments/:id`            | bearer | 404 for someone else's — not 403                                |
+| `PATCH`      | `/appointments/:id/cancel`     | bearer | Frees the slot                                                  |
+| `PATCH`      | `/appointments/:id/reschedule` | bearer | Atomic: old slot released only if the new one is secured        |
+| `GET`        | `/appointments/availability`   | bearer | `?providerId=&date=YYYY-MM-DD`                                  |
+| `GET`/`POST` | `/chat/sessions`               | bearer | `GET ?limit=&cursor=` — cursor-paginated, newest activity first |
+| `GET`        | `/chat/sessions/:id/messages`  | bearer | Replays stored rich payloads                                    |
+| `POST`       | `/chat/sessions/:id/messages`  | bearer | REST equivalent of the socket path                              |
+| `GET`        | `/health` · `/ready`           | —      | Liveness; readiness also proves the DB is reachable             |
 
 **Socket.IO** — JWT in the handshake, rooms keyed by user id.
 Up: `chat:message`. Down: `chat:received`, `assistant:typing`, `assistant:delta`,
@@ -420,8 +427,8 @@ Chromium. `scripts/browserSmoke.mjs` therefore drives the system Google Chrome v
 
 ```bash
 npm test                       # everything
-npm test --workspace server    # 130 tests, integration ones against real Postgres
-npm test --workspace client    # 34 component/unit tests in jsdom
+npm test --workspace server    # 137 tests, integration ones against real Postgres
+npm test --workspace client    # 37 component/unit tests in jsdom
 ```
 
 Server tests use a separate `nudge_ai_test` database (auto-derived from `DATABASE_URL`, with a

@@ -110,10 +110,20 @@ const ChatMessage = ({ message, onBooked }) => {
         {/* Names the speaker for screen readers, which cannot see the avatar or alignment. */}
         <span className="sr-only">{isUser ? 'You said' : 'Assistant said'}:</span>
 
+        {/*
+          Only the user's turn is a bubble.
+
+          That asymmetry is the reference's, and it is doing real work: the assistant speaks in
+          long form and a container around every reply turns the thread into a wall of boxes,
+          while the user's turns are short and need the bubble to read as theirs. Alignment and
+          the avatar already say who is speaking, so the assistant's surface is the page itself.
+        */}
         <div
           className={cn(
-            'inline-block rounded-lg px-3 py-2 text-left text-sm whitespace-pre-wrap',
-            isUser ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground',
+            'text-left text-sm whitespace-pre-wrap',
+            isUser
+              ? 'bg-secondary text-secondary-foreground inline-block rounded-3xl px-4 py-2.5'
+              : 'text-foreground',
             message.isPending && 'opacity-60',
           )}
         >

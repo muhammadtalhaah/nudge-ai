@@ -284,6 +284,27 @@ confirmed appointment that then vanishes is worse than a brief spinner — espec
 something a person will plan their day around. Optimistic updates are right for cheap,
 reversible, always-succeeding actions; this is none of those.
 
+### Why the conversation list pages by cursor
+
+The appointments list pages by number, and the conversation list does not. The difference is
+whether the sort key holds still: appointments are ordered by `starts_at`, which does not
+change while someone reads a page, so `OFFSET` is exact. Conversations are ordered by most
+recent activity, and every message sends one back to the top — so the row at offset 3 is not
+the same row it was when page one was fetched. Offsets would duplicate and skip, silently, and
+only for people with enough history to scroll. A cursor names a position in the ordering
+(`(activity, id) < (…)`), which stays meaningful while the list moves underneath it.
+
+The cursor is opaque — base64url JSON, decoded and schema-checked server side like any other
+input. That keeps the sort key an implementation detail rather than something a client can come
+to depend on, and it carries no authority: rows are scoped to the caller regardless of what a
+cursor says, so a forged one can at most name a position in the forger's own list.
+
+On the client this is `useInfiniteQuery` under the existing `queryKeys.chat.sessions` key —
+deliberately without the cursor in the key, so an invalidation after a new message refetches
+every loaded page and the list stays consistent from the top down. The trigger is an
+`IntersectionObserver` on a sentinel rendered only while more pages exist, rather than a
+throttled scroll listener doing its own arithmetic against the container's metrics.
+
 **The API client owns auth recovery.** `request()` retries once through a single-flight refresh
 on `TOKEN_EXPIRED`. Nothing else in the client thinks about tokens.
 
@@ -297,6 +318,22 @@ experience without breaking it — and the connection state is shown rather than
 hardcodes a colour, radius or font. Appointment statuses have semantic tokens
 (`--status-confirmed`, …) and always render an icon and a text label alongside the colour, so
 status is never communicated by colour alone.
+
+That claim was tested when the design reference arrived: the entire palette swap — near-black
+layered greys, a vivid orange accent, hairlines instead of shadows — is values in this one file.
+The component changes that accompanied it were shape, not colour: a bubble only on the user's
+turn, a composer that is one rounded surface rather than a field beside a button.
+
+The dark theme is the reference, measured from it rather than eyeballed. Light is a derived
+counterpart holding the same accent and the same layering logic, because a dark-only redesign
+would quietly abandon the theme toggle. Four greys carry the whole dark scheme and the order
+they sit in _is_ the hierarchy: sidebar deepest, page above it, anything interactive or
+containing one step higher again.
+
+One deliberate departure from the reference: `--primary-foreground` is near-black, not white.
+White on that orange measures 3.03:1, which fails AA for the button labels sitting on it;
+near-black is 6.11:1 on the identical fill. The colour anyone sees is the reference's — only
+what sits on top of it was chosen.
 
 Tailwind v4 has no JS config, so the tokens are CSS custom properties exposed to utilities via
 `@theme inline`, and dark mode is a `@custom-variant` on a class (not a media query) because the

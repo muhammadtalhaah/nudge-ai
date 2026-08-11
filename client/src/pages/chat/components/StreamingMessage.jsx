@@ -26,10 +26,9 @@ const StreamingMessage = ({ text }) => (
       {/* Static, so it is announced on appearance and not repeated as the text grows. */}
       <span className="sr-only">The assistant is replying</span>
 
-      <div
-        className="bg-muted text-foreground inline-block rounded-lg px-3 py-2 text-left text-sm whitespace-pre-wrap"
-        aria-hidden="true"
-      >
+      {/* Unbubbled, exactly like the finished assistant turn it becomes — otherwise the reply
+          visibly changes shape at the moment streaming ends. */}
+      <div className="text-foreground text-left text-sm whitespace-pre-wrap" aria-hidden="true">
         {text}
         <span className="bg-foreground/70 ml-0.5 inline-block h-3.5 w-0.5 translate-y-0.5 animate-pulse rounded-full" />
       </div>

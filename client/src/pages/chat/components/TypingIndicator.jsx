@@ -18,7 +18,9 @@ const TypingIndicator = () => {
         </AvatarFallback>
       </Avatar>
 
-      <div className="bg-muted flex items-center gap-1 rounded-lg px-3 py-3">
+      {/* No bubble either: the dots are the assistant mid-turn, and a container here would be
+          a box that vanishes the instant the reply arrives. */}
+      <div className="flex items-center gap-1 py-3">
         <span className="sr-only">The assistant is typing</span>
         {[0, 150, 300].map((delay) => (
           <span
