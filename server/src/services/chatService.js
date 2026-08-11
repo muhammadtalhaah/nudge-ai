@@ -61,8 +61,17 @@ const notify = (hook, value) => {
   }
 };
 
-/** @returns {import('../../../shared/chat.js').ChatAppointmentSummary} */
-const toAppointmentSummary = (appointment) => ({
+/**
+ * The client-facing view of an appointment.
+ *
+ * Exported because it is also the payload of the `appointment:created` socket event, which the
+ * REST layer emits for a booking made in the in-chat form. One mapper keeps both routes into a
+ * booking sending the same shape, and keeps internal columns — the tenant id, the source, the
+ * cancellation fields — off the wire.
+ *
+ * @returns {import('../../../shared/chat.js').ChatAppointmentSummary}
+ */
+export const toAppointmentSummary = (appointment) => ({
   id: appointment.id,
   providerName: appointment.providerName,
   providerSpecialty: appointment.providerSpecialty,
@@ -159,6 +168,53 @@ export const getOwnedSession = async (caller, sessionId) => {
 export const getMessages = async (caller, sessionId) => {
   await getOwnedSession(caller, sessionId);
   return chatRepository.listMessages(pool, sessionId);
+};
+
+/**
+ * Record a booking that was completed in the structured form, as a turn of the conversation.
+ *
+ * The form is the assistant's fallback path — it is rendered inside a chat bubble and it
+ * answers a question the assistant asked — so a booking made in it is part of the conversation
+ * and not a silent side effect of it. Without this, the only trace was a toast: gone on the
+ * next render, absent on reload, and leaving the thread ending on the question rather than the
+ * answer.
+ *
+ * The payload is the same `APPOINTMENT_CREATED` reply the conversational path produces, built
+ * here from the appointment row that was just written — so the client renders one confirmation
+ * for both routes into a booking, and the model has authored none of it.
+ *
+ * It also ends the booking draft: `findBookingDraft` treats an `APPOINTMENT_CREATED` reply as
+ * the end of what is in progress, so the next vague message cannot book this appointment again.
+ *
+ * @param {import('./appointmentService.js').Caller} caller
+ * @param {string} sessionId
+ * @param {object} appointment As returned by `appointmentService.book`.
+ * @returns {Promise<{ message: object,
+ *   reply: import('../../../shared/chat.js').ChatReply }>}
+ */
+export const recordFormBooking = async (caller, sessionId, appointment) => {
+  const session = await getOwnedSession(caller, sessionId);
+
+  /** @type {import('../../../shared/chat.js').ChatReply} */
+  const reply = {
+    kind: REPLY_KIND.APPOINTMENT_CREATED,
+    // No date or time in the prose, for the same reason the conversational path omits them:
+    // the server only knows the clinic's timezone, and the card below is rendered in the
+    // viewer's. Times are formatted in exactly one place.
+    text: `Booked with ${appointment.providerName}. The details are below, and it is now in your appointments.`,
+    appointment: toAppointmentSummary(appointment),
+  };
+
+  const message = await withTransaction(async (tx) =>
+    chatRepository.addMessage(tx, {
+      sessionId: session.id,
+      role: CHAT_ROLES.ASSISTANT,
+      content: reply.text,
+      extractedData: reply,
+    }),
+  );
+
+  return { message, reply };
 };
 
 /* --------------------------------------------------------------- the AI turn ---- */
@@ -733,6 +789,7 @@ export default {
   listSessions,
   getOwnedSession,
   getMessages,
+  recordFormBooking,
   handleMessage,
   describeProvider,
 };

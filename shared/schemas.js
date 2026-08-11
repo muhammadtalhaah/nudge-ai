@@ -77,15 +77,79 @@ export const createAppointmentSchema = z.object({
 });
 
 /**
+ * A YYYY-MM-DD date as local midnight, and today's local midnight, as comparable timestamps.
+ *
+ * Built from calendar fields rather than by parsing the string, because `new Date('2026-08-11')`
+ * is midnight *UTC* — the previous day for anyone west of Greenwich. "Has that date passed?" is
+ * a question about the user's own calendar, so both sides of the comparison are local.
+ *
+ * Read at parse time, never at import: a tab left open overnight must not still think it is
+ * yesterday.
+ */
+const localMidnight = (isoDate) => {
+  if (typeof isoDate !== 'string') return NaN;
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return new Date(year, month - 1, day).getTime();
+};
+
+const startOfToday = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+};
+
+/**
+ * Today or later, in the user's own timezone.
+ *
+ * Anything that is not a date passes. Zod carries on running a field's remaining checks after
+ * a format check has already failed, so without this "not-a-date" came back as both malformed
+ * *and* in the past — a second error that says nothing, on a value there is nothing to say
+ * about. The format rule is the one complaint that belongs to it.
+ */
+const isNotPastDate = (isoDate) => {
+  const chosen = localMidnight(isoDate);
+  return Number.isNaN(chosen) || chosen >= startOfToday();
+};
+
+/**
+ * A wall-clock time that has already gone by *on the day chosen*.
+ *
+ * Only ever true for today — 09:00 is not in the past on any other date, which is exactly why
+ * this cannot be a rule on `time` alone. Anything unparseable is not past, for the reason above.
+ */
+const isPastTimeToday = (isoDate, clockTime) => {
+  if (typeof clockTime !== 'string') return false;
+  if (localMidnight(isoDate) !== startOfToday()) return false;
+
+  const [hour, minute] = clockTime.split(':').map(Number);
+  const now = new Date();
+  return hour * 60 + minute <= now.getHours() * 60 + now.getMinutes();
+};
+
+/**
  * What the booking form submits. The form collects a date and a time separately because
  * that is the natural UI, then composes them into `startsAt` in the browser's timezone.
+ *
+ * The past-date rule is enforced here as well as by the date input's `min`, because `min` only
+ * constrains the picker: a date typed into the field, or one the assistant prefilled from
+ * "last Tuesday", reaches submit untouched. `appointmentService.book` refuses a past instant
+ * regardless — this is the same rule stated early, on the field the user has to change.
  */
-export const bookingFormSchema = z.object({
-  providerId: z.uuid('Choose a provider'),
-  date: calendarDateSchema,
-  time: clockTimeSchema,
-  notes: z.string().trim().max(LIMITS.NOTES_MAX_LENGTH, 'Notes are too long').optional(),
-});
+export const bookingFormSchema = z
+  .object({
+    providerId: z.uuid('Choose a provider'),
+    date: calendarDateSchema.refine(isNotPastDate, 'That date has passed — choose today or later'),
+    time: clockTimeSchema,
+    notes: z.string().trim().max(LIMITS.NOTES_MAX_LENGTH, 'Notes are too long').optional(),
+  })
+  /*
+   * Cross-field, so it cannot live on `time`: whether 09:00 has passed depends entirely on which
+   * day was chosen. Reported against `time` anyway, because that is the field to change — moving
+   * the day to fix "that time has passed today" is not what anyone means.
+   */
+  .refine((values) => !isPastTimeToday(values.date, values.time), {
+    path: ['time'],
+    message: 'That time has already passed today',
+  });
 
 export const cancelAppointmentSchema = z.object({
   reason: z.string().trim().max(300, 'Reason is too long').optional(),

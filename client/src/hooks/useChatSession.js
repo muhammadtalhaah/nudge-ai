@@ -170,9 +170,22 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
       if (!typing) setStreamingTurn(null);
     };
 
-    const handleAppointmentCreated = () => {
+    const handleAppointmentCreated = ({ sessionId: eventSessionId, chatMessage }) => {
       // A booking made in conversation must show up on the appointments page without a reload.
       void queryClient.invalidateQueries({ queryKey: queryKeys.appointments.all });
+
+      /*
+       * A booking finished in the in-chat form arrives with the turn the server recorded for it,
+       * because it completed over REST and no assistant reply carried it. The conversational
+       * path omits it — ASSISTANT_REPLY has already delivered that turn.
+       *
+       * Appended through the same id check as every other message, which is what makes this
+       * safe for the tab that made the booking: it appended the turn from the REST response and
+       * then receives its own broadcast, and the second one is a no-op rather than a duplicate.
+       */
+      if (chatMessage && eventSessionId === sessionIdRef.current) {
+        appendUnlessPresent(chatMessage);
+      }
     };
 
     const handleError = (payload) => {
@@ -202,6 +215,21 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
       socket.off(SOCKET_EVENTS.ERROR, handleError);
     };
   }, [socket, queryClient]);
+
+  /**
+   * Append a turn the server has already persisted.
+   *
+   * The one way into `messages` that is not a socket event or a send. It exists for the in-chat
+   * booking form, which completes over REST and gets its confirmation turn back in the
+   * response — there is no chat event to carry it. Deduplicated on id like every other append,
+   * so it is safe if a socket delivers the same row as well.
+   */
+  const appendMessage = useCallback((message) => {
+    if (!message?.id) return;
+    setMessages((current) =>
+      current.some((existing) => existing.id === message.id) ? current : [...current, message],
+    );
+  }, []);
 
   /**
    * The id to send to, creating the conversation if this is its first message.
@@ -313,6 +341,7 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
     error,
     socketStatus,
     sendMessage,
+    appendMessage,
     retry: bootstrap,
   };
 };

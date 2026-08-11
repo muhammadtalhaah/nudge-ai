@@ -107,6 +107,20 @@ export const SOCKET_EVENTS = {
    */
   ASSISTANT_DELTA: 'assistant:delta',
   ASSISTANT_REPLY: 'assistant:reply',
+  /**
+   * A booking, announced to every tab its owner has open.
+   *
+   * Payload: `{ appointment, sessionId?, chatMessage? }`, where `appointment` is a
+   * `ChatAppointmentSummary`.
+   *
+   * The two optional fields carry the conversation turn recorded for a booking finished in the
+   * in-chat form, which completes over REST and so has no assistant reply of its own. They are
+   * absent on the conversational path, where ASSISTANT_REPLY has already delivered that turn —
+   * which is what stops a client appending the same message twice.
+   *
+   * This is the only event emitted from outside the socket handlers; the REST layer reaches it
+   * through `server/src/realtime.js`.
+   */
   APPOINTMENT_CREATED: 'appointment:created',
   ERROR: 'chat:error',
 };

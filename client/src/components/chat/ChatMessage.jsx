@@ -71,22 +71,38 @@ const AppointmentList = ({ appointments }) => {
   );
 };
 
+/**
+ * The confirmation card, shown for both routes into a booking — one the assistant completed
+ * itself, and one finished in the form below its question.
+ *
+ * The time is formatted here and nowhere else: the server knows the clinic's timezone and only
+ * the browser knows the viewer's, so the prose above deliberately names no time.
+ */
 const BookedConfirmation = ({ appointment }) => (
   <div className="border-status-confirmed/40 bg-status-confirmed/10 mt-3 flex items-start gap-2 rounded-md border px-3 py-2">
     <CalendarCheck
       className="text-status-confirmed-foreground mt-0.5 size-4 shrink-0"
       aria-hidden="true"
     />
-    <div className="min-w-0 text-sm">
-      <p className="font-medium">{appointment.providerName}</p>
-      <p className="text-muted-foreground text-xs">
-        {formatDateTime(appointment.startsAt)} · {appointment.providerSpecialty}
-      </p>
+    <div className="flex min-w-0 flex-1 items-start justify-between gap-2">
+      <div className="min-w-0 text-sm">
+        <p className="font-medium">{appointment.providerName}</p>
+        <p className="text-muted-foreground text-xs">
+          {formatDateTime(appointment.startsAt)} · {appointment.providerSpecialty}
+        </p>
+      </div>
+      {/* The same badge the appointments page uses, so a confirmation reads identically
+          wherever it appears. */}
+      <AppStatusBadge status={appointment.status} />
     </div>
   </div>
 );
 
-const ChatMessage = ({ message, onBooked, isFirst, isLast }) => {
+/**
+ * @param isBookingResolved a later turn in this conversation is a completed booking, so this
+ *   turn's form has been answered and is not rendered again
+ */
+const ChatMessage = ({ message, onBooked, chatSessionId, isBookingResolved, isFirst, isLast }) => {
   const isUser = message.role === 'user';
   const reply = message.reply;
 
@@ -150,7 +166,17 @@ const ChatMessage = ({ message, onBooked, isFirst, isLast }) => {
             {/* Free times, read off the real calendar rather than claimed by the model. */}
             {reply.kind === 'slot_list' && reply.slots ? <SlotList slots={reply.slots} /> : null}
 
-            {reply.kind === 'form_fallback' ? (
+            {/*
+              The form is dropped once the booking it was collecting has been made — the
+              confirmation turn below it is the answer, and leaving a live form above it invites
+              a second booking of the same appointment. Derived from the transcript rather than
+              from local state, so a reload shows the same thing: this mirrors the server, where
+              `findBookingDraft` also treats a completed booking as the end of the draft.
+
+              The assistant's question is left standing. It is what was actually said, and the
+              thread reads as a conversation that reached an answer.
+            */}
+            {reply.kind === 'form_fallback' && !isBookingResolved ? (
               <Card className="mt-3">
                 <CardContent className="space-y-3 p-3">
                   <div className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
@@ -158,7 +184,7 @@ const ChatMessage = ({ message, onBooked, isFirst, isLast }) => {
                     Finish the details
                   </div>
 
-                  {/* Candidate doctors, when the assistant is narrowing a choice. */}
+                  {/* Candidate providers, when the assistant is narrowing a choice. */}
                   {reply.providers?.length > 1 ? (
                     <ProviderOptions providers={reply.providers} />
                   ) : null}
@@ -169,6 +195,7 @@ const ChatMessage = ({ message, onBooked, isFirst, isLast }) => {
                     prefill={reply.prefill}
                     highlight={reply.missing ?? []}
                     onBooked={onBooked}
+                    chatSessionId={chatSessionId}
                     compact
                   />
                 </CardContent>
