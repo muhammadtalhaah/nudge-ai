@@ -206,11 +206,47 @@ const consumeStream = async (response, onReplyDelta) => {
   };
 };
 
+/**
+ * A short freeform completion, kept apart from `complete` on purpose.
+ *
+ * No JSON mode, a tight token ceiling, and its own shorter timeout regardless of how patient
+ * the configured one is: this names a sidebar row, and it is never worth making someone wait
+ * on it. No retry either — a title that failed is a title we do without.
+ */
+const summariseOnce = async (prompt) => {
+  const response = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: env.MISTRAL_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 24,
+    }),
+    signal: AbortSignal.timeout(Math.min(env.AI_TIMEOUT_MS, 8_000)),
+  });
+
+  if (!response.ok) throw new ProviderError(`Mistral responded ${response.status} to a summary`);
+
+  const payload = await response.json().catch((error) => {
+    throw new ProviderError('Mistral returned a body that was not JSON', { cause: error });
+  });
+
+  const parsed = responseSchema.safeParse(payload);
+  if (!parsed.success) throw new ProviderError('Mistral returned an unexpected response shape');
+
+  return parsed.data.choices[0].message.content;
+};
+
 /** @returns {import('../provider.js').AiProvider} */
 export const createMistralProvider = () => ({
   name: 'mistral',
   isDeterministic: false,
   supportsStreaming: true,
+  summarise: summariseOnce,
 
   async complete(request) {
     const streaming = typeof request.onReplyDelta === 'function';

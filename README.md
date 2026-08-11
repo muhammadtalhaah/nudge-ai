@@ -177,6 +177,16 @@ every message sends its conversation back to the top, so by the time someone scr
 two an offset would return rows they have already seen and skip ones they have not. A cursor
 names a position in the ordering instead of counting from the top.
 
+**A conversation is created by a message, not by a click.** "New Chat" writes nothing — it
+opens a blank thread, and the record appears when there is a first message to put in it.
+Concurrent sends share one create request, and the list query excludes empty conversations, so
+neither a double-tap nor a failed send can leave a row nobody meant to make.
+
+**Titles are written by the model**, in a small second call after the reply is stored, once per
+conversation rather than once per message. Truncating the first message produced six identical
+rows reading "I have an itchy rash on my…"; it survives only as the fallback for when the call
+fails or the provider cannot summarise at all.
+
 **Guardrails**, all tested:
 
 | Risk                                        | Mitigation                                                                                                      |
@@ -427,8 +437,8 @@ Chromium. `scripts/browserSmoke.mjs` therefore drives the system Google Chrome v
 
 ```bash
 npm test                       # everything
-npm test --workspace server    # 137 tests, integration ones against real Postgres
-npm test --workspace client    # 37 component/unit tests in jsdom
+npm test --workspace server    # 144 tests, integration ones against real Postgres
+npm test --workspace client    # 47 component/unit tests in jsdom
 ```
 
 Server tests use a separate `nudge_ai_test` database (auto-derived from `DATABASE_URL`, with a

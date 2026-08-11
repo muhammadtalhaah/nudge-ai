@@ -21,6 +21,7 @@ import { chatSessionCursorSchema } from '../../../shared/schemas.js';
 import { extract, getProvider } from '../ai/extraction.js';
 import { zonedDateTimeToUtc } from '../ai/naturalDate.js';
 import { buildSystemPrompt } from '../ai/prompts.js';
+import { generateTitle } from '../ai/title.js';
 import { env } from '../config/env.js';
 import { pool, withTransaction } from '../db/pool.js';
 import { AppError, NotFoundError, ValidationError } from '../errors/AppError.js';
@@ -536,6 +537,48 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
 };
 
 /**
+ * Truncation, kept only for when the model cannot be asked or cannot answer.
+ *
+ * This used to be how every conversation was named, and it reads like it: half a sentence,
+ * cut mid-word, repeated down the sidebar because six threads open the same way. It survives
+ * as the floor under the real titles — a row labelled with the person's own words is a poor
+ * label, but it is a better one than none.
+ */
+const truncatedTitle = (content) => {
+  const firstLine = content.split('\n').find((line) => line.trim()) ?? content;
+  const cleaned = firstLine.trim().replace(/\s+/g, ' ');
+  return cleaned.length > 40 ? `${cleaned.slice(0, 39).trimEnd()}…` : cleaned;
+};
+
+/**
+ * Give the conversation a name, once.
+ *
+ * Guarded on the title still being absent, which is what stops a second call on every
+ * subsequent turn — and, because `setTitleIfEmpty` only writes over NULL, two turns racing
+ * here cannot rename a conversation someone is already looking at.
+ *
+ * Deliberately after the reply has been built and stored. Naming a row in a list is not worth
+ * a moment of the wait for an answer, and if this whole step falls over the turn is already
+ * complete and safe.
+ */
+const nameConversation = async (session, userMessage, assistantReply) => {
+  if (session.title !== null) return;
+
+  try {
+    const generated = await generateTitle(userMessage, assistantReply);
+    await chatRepository.setTitleIfEmpty(
+      pool,
+      session.id,
+      generated ?? truncatedTitle(userMessage),
+    );
+  } catch (error) {
+    // Including the write. A conversation with no label is a cosmetic problem; a turn that
+    // 500s after the booking is already made is not.
+    aiLogger.error({ err: error, sessionId: session.id }, 'could not name the conversation');
+  }
+};
+
+/**
  * Handle one turn of conversation.
  *
  * Ordering is deliberate: the user's message is persisted before the model is called, so a
@@ -556,15 +599,13 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
   if (!business) throw new NotFoundError('Business');
 
   // Persist first — the turn survives whatever happens next.
-  const userMessage = await withTransaction(async (tx) => {
-    const message = await chatRepository.addMessage(tx, {
+  const userMessage = await withTransaction(async (tx) =>
+    chatRepository.addMessage(tx, {
       sessionId: session.id,
       role: CHAT_ROLES.USER,
       content,
-    });
-    await chatRepository.setTitleIfEmpty(tx, session.id, content);
-    return message;
-  });
+    }),
+  );
 
   // Announced here rather than at the end of the turn, so a transport that streams the
   // assistant's prose cannot deliver the reply to another tab before the message it answers.
@@ -647,6 +688,8 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
       extractedData: reply,
     }),
   );
+
+  await nameConversation(session, content, reply.text);
 
   // Logged last, and never allowed to fail the request: observability must not break the
   // feature it observes.

@@ -156,6 +156,46 @@ about Friday?", Mistral names Friday in its prose and leaves the field null, and
 Thursday there would show real times for a day nobody asked about, under a sentence naming
 another one. Asking which day costs a turn; the alternative is confidently wrong.
 
+### A conversation is created by a message, not by a click
+
+"New Chat" writes nothing. It navigates to the chat with no `?session=`, which the page reads
+as a blank thread held in memory; the row is written when there is a first message to put in
+it. Creating one on the click meant anyone who opened the assistant and thought better of it
+left an empty conversation in their sidebar forever — and the chat page did the same thing on
+mount, so simply _looking_ at it was enough.
+
+Two guards, because the failure is silent and permanent:
+
+- `ensureSession` shares one in-flight create between concurrent sends. Two quick sends on a
+  blank thread — a double-tapped suggestion, Enter twice — both read a null id, and without it
+  the second message lands in a conversation nobody can see. Same single-flight shape as the
+  token refresh in `api/client.js`.
+- The list query excludes `message_count = 0`. Even if a session is created and the message
+  that would have filled it never lands, an empty one is never listed.
+
+The URL is updated the moment the id exists, which is what makes a refresh mid-conversation
+reopen the thread rather than a blank one.
+
+### Naming a conversation
+
+Titles come from the model, in a second small call, and never from truncating the first
+message — six threads that all begin "I have an itchy rash on my…" are six identical rows.
+
+It is a separate call rather than another field on the extraction, and that separation is the
+point: every field in the extraction contract is acted on, so a malformed one costs the person
+their turn. A sidebar label is not acted on, and the worst case here is no label. `ai/title.js`
+mirrors `extraction.js` — untrusted text in, sanitised and bounded output or null — except that
+it never throws and never retries.
+
+It runs after the reply has been built and stored, so it cannot delay the answer, and it is
+guarded on the title still being absent, so it happens once per conversation rather than once
+per message. Failure falls back to the truncation this replaced: a poor label is still a better
+one than none. `setTitleIfEmpty`'s `IS NULL` guard settles any race.
+
+The deterministic provider does not implement `summarise` at all. It matches keywords; a rule
+that pretended to summarise would just be the truncation again, so offline conversations take
+the fallback openly rather than claiming an ability the provider lacks.
+
 ### Conversation state lives in the session, not the model
 
 Replaying the transcript is not the same as remembering. A model reads a turn at a time, and one

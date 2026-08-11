@@ -56,6 +56,11 @@ export const findSessionById = async (executor, id) => {
 /**
  * One page of a user's conversations, newest activity first.
  *
+ * A conversation with no messages is not one yet, so it is excluded. The client creates a
+ * session on the first message rather than when someone clicks "New Chat", which means an
+ * empty row should never exist — this is the second lock on that door. It also covers the
+ * window where a session is created and the message that would have filled it never lands.
+ *
  * Ordered by `COALESCE(last_message_at, created_at)` rather than by `last_message_at` with
  * nulls last. Two things follow from collapsing it to one non-null key, and both matter:
  *
@@ -85,6 +90,7 @@ export const listSessionsForUser = async (executor, userId, options = {}) => {
     `SELECT ${SESSION_COLUMNS}, COALESCE(last_message_at, created_at) AS activity_at
        FROM chat_sessions
       WHERE user_id = $1
+        AND message_count > 0
         AND ($2::timestamptz IS NULL
              OR (COALESCE(last_message_at, created_at), id) < ($2::timestamptz, $3::uuid))
       ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC
@@ -234,7 +240,13 @@ export const findBookingDraft = async (executor, sessionId) => {
   };
 };
 
-/** Derived from the first user message so the session list is scannable. */
+/**
+ * Name a conversation, if it does not already have one.
+ *
+ * The `IS NULL` guard is the concurrency control, not just an optimisation: two turns racing
+ * to name the same conversation both write, and without it the second would rename a row
+ * someone is already looking at. First one wins, quietly.
+ */
 export const setTitleIfEmpty = async (executor, sessionId, title) => {
   await executor.query('UPDATE chat_sessions SET title = $2 WHERE id = $1 AND title IS NULL', [
     sessionId,

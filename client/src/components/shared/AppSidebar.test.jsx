@@ -128,11 +128,13 @@ describe('AppSidebar', () => {
     expect(newest).not.toHaveAttribute('aria-current');
   });
 
-  it('marks the newest as current when the URL names none, since that is what opens', async () => {
+  it('marks nothing current when the URL names no conversation', async () => {
     renderSidebar('/chat');
 
+    // A chat page with no `?session=` is a blank thread, not the newest conversation — so
+    // highlighting a row here would point at one nobody is in.
     const newest = await screen.findByRole('link', { name: /Itchy rash on my arm/ });
-    expect(newest).toHaveAttribute('aria-current', 'page');
+    expect(newest).not.toHaveAttribute('aria-current');
   });
 
   it('does not mark any conversation current when away from the chat page', async () => {
@@ -142,20 +144,19 @@ describe('AppSidebar', () => {
     expect(newest).not.toHaveAttribute('aria-current');
   });
 
-  it('creates a conversation and navigates to it', async () => {
+  it('opens a blank chat without creating a conversation', async () => {
     const user = userEvent.setup();
-    createSession.mockResolvedValue({
-      ok: true,
-      data: { session: { id: 'session-brand-new', title: null } },
-      meta: null,
-    });
 
-    renderSidebar();
+    renderSidebar('/chat?session=session-older');
     await user.click(screen.getByRole('button', { name: /New Chat/ }));
 
+    // Navigation only: no `?session=`, so the chat page opens an empty thread. The record is
+    // written when there is a first message to put in it.
     await waitFor(() => {
-      expect(screen.getByTestId('location')).toHaveTextContent('/chat?session=session-brand-new');
+      expect(screen.getByTestId('location')).toHaveTextContent('/chat');
     });
+    expect(screen.getByTestId('location')).not.toHaveTextContent('session=');
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it('shows an empty state when there are no conversations', async () => {

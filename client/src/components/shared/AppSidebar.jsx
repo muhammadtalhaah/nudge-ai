@@ -14,7 +14,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/config/constants';
-import { useChatSessions, useCreateChatSession } from '@/hooks/useChatSessions';
+import { useChatSessions } from '@/hooks/useChatSessions';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useLayout } from '@/context/LayoutContext';
 import { cn } from '@/lib/utils';
@@ -57,7 +57,6 @@ const AppSidebar = () => {
 
   const { sessions, isPending, isError, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useChatSessions();
-  const createSession = useCreateChatSession();
 
   /**
    * The list scrolls inside this panel rather than the page, so it is the observer's root —
@@ -91,18 +90,16 @@ const AppSidebar = () => {
   );
 
   /**
-   * Starting a conversation from the sidebar navigates to it by URL rather than reaching into
-   * the chat page's state — the page reads `?session=` and opens whatever it names, so the two
-   * stay decoupled.
+   * Starting a conversation creates nothing.
+   *
+   * It navigates to the chat with no `?session=`, which the page reads as a blank thread. The
+   * record is written when there is a first message to put in it — clicking this used to
+   * persist a conversation immediately, so anyone who clicked it and then thought better of it
+   * left an empty row in the sidebar forever.
    */
-  const handleNewConversation = async () => {
-    try {
-      const session = await createSession.mutateAsync();
-      navigate(`${ROUTES.CHAT}?session=${session.id}`);
-      closeSidebar();
-    } catch {
-      // The mutation's own error state drives the button label; nothing else to do here.
-    }
+  const handleNewConversation = () => {
+    navigate(ROUTES.CHAT);
+    closeSidebar();
   };
 
   return (
@@ -118,13 +115,9 @@ const AppSidebar = () => {
       </div>
 
       <div className="px-3 pt-2 pb-3">
-        <Button
-          className="w-full justify-start text-white"
-          onClick={handleNewConversation}
-          disabled={createSession.isPending}
-        >
+        <Button className="w-full justify-start text-white" onClick={handleNewConversation}>
           <Plus className="size-4" aria-hidden="true" />
-          {createSession.isPending ? 'Starting…' : 'New Chat'}
+          New Chat
         </Button>
       </div>
 
@@ -184,13 +177,10 @@ const AppSidebar = () => {
 
                 <ul className="space-y-0.5">
                   {group.items.map((session) => {
-                    // The newest conversation is the one open by default, so it is highlighted
-                    // even before the URL names it explicitly.
-                    const isActive =
-                      isOnChat &&
-                      (activeSessionId
-                        ? activeSessionId === session.id
-                        : session.id === sessions[0].id);
+                    // Only ever the conversation the URL names. The chat page opens a blank
+                    // thread when it names none, so highlighting the newest row there would
+                    // point at a conversation nobody is in.
+                    const isActive = isOnChat && activeSessionId === session.id;
 
                     return (
                       <li key={session.id}>

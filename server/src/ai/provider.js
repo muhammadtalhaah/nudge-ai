@@ -89,6 +89,13 @@
  *   incremental output to give, and chopping a finished string into fake "tokens" would be
  *   an animation dressed up as generation. It stays false and the UI shows the wait honestly.
  * @property {(request: CompletionRequest) => Promise<CompletionResult>} complete
+ * @property {(prompt: string) => Promise<string>} [summarise]
+ *   Optional: one short freeform completion, used to name a conversation.
+ *
+ *   Optional because it is the one thing in this contract a non-model provider genuinely
+ *   cannot fake. The deterministic provider matches keywords; it has no way to summarise, and
+ *   a rule that pretended to would just be the truncation this replaced. Callers fall back
+ *   when it is absent, so the offline mode keeps working without claiming an ability it lacks.
  */
 
 /** Raised for any provider-side failure: network, timeout, bad status, empty body. */

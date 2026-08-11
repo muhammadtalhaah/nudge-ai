@@ -6,7 +6,7 @@
  * created or receives a message — so it belongs in the Query cache, unlike the message stream.
  */
 
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 
 import chatApi from '@/api/chat';
 import { queryKeys } from '@/config/queryKeys';
@@ -56,18 +56,12 @@ export const useChatSessions = () => {
   };
 };
 
-export const useCreateChatSession = () => {
-  const queryClient = useQueryClient();
+/*
+ * There is deliberately no `useCreateChatSession` here any more.
+ *
+ * Nothing in the UI should be able to create a conversation as an action of its own — that is
+ * what filled the sidebar with empty rows. The single place one is created is `useChatSession`,
+ * on the first message, behind a guard that makes concurrent sends share one request.
+ */
 
-  return useMutation({
-    mutationFn: async () => {
-      const result = unwrap(await chatApi.createSession({}));
-      return result.data.session;
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
-    },
-  });
-};
-
-export default { useChatSessions, useCreateChatSession };
+export default { useChatSessions };

@@ -1013,8 +1013,11 @@ describe('session ownership', () => {
   });
 
   it("only lists the caller's own sessions", async () => {
-    await newSession(accessToken);
-    await newSession(otherAccessToken);
+    setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'Hello.' })));
+
+    // Spoken in, because a silent conversation is not listed for anyone.
+    await say(accessToken, await newSession(accessToken), 'mine').expect(201);
+    await say(otherAccessToken, await newSession(otherAccessToken), 'theirs').expect(201);
 
     const response = await request(app)
       .get('/api/chat/sessions')
@@ -1030,6 +1033,146 @@ describe('session ownership', () => {
 });
 
 /**
+ * Naming a conversation.
+ *
+ * The title is the only thing a model writes here that is stored and shown back verbatim, so
+ * the cases that matter are the ones where it misbehaves: a quoted answer, an essay, a provider
+ * that cannot summarise at all. None of them may cost the turn, and none may leave a row with
+ * no label.
+ */
+describe('conversation titles', () => {
+  /** A provider that also summarises, so the title path has something to call. */
+  const titlingProvider = (raw, summary) => ({
+    name: 'mistral',
+    isDeterministic: false,
+    supportsStreaming: false,
+    complete: async () => ({ raw, model: 'fake-model', promptTokens: 10, completionTokens: 5 }),
+    summarise: async () => (typeof summary === 'function' ? summary() : summary),
+  });
+
+  const titleOf = async (sessionId) => {
+    const { rows } = await pool.query('SELECT title FROM chat_sessions WHERE id = $1', [sessionId]);
+    return rows[0].title;
+  };
+
+  const greeting = () => extraction({ intent: 'greeting', reply: 'Hello.' });
+
+  it('names the conversation from the model, not from the message', async () => {
+    setProviderForTesting(titlingProvider(greeting(), 'Itchy Rash'));
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I have had an itchy rash on my arm for a week').expect(201);
+
+    expect(await titleOf(sessionId)).toBe('Itchy Rash');
+  });
+
+  it('cleans up a title the model dressed as prose', async () => {
+    setProviderForTesting(
+      titlingProvider(greeting(), '  Title: "Cardiology Appointment."\nThis names the request.  '),
+    );
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I need a cardiologist').expect(201);
+
+    expect(await titleOf(sessionId)).toBe('Cardiology Appointment');
+  });
+
+  it('names it only once, however long the conversation runs', async () => {
+    let summaryCalls = 0;
+    setProviderForTesting(
+      titlingProvider(greeting(), () => {
+        summaryCalls += 1;
+        return 'Itchy Rash';
+      }),
+    );
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I have a rash').expect(201);
+    await say(accessToken, sessionId, 'and it itches').expect(201);
+    await say(accessToken, sessionId, 'quite a lot').expect(201);
+
+    expect(summaryCalls).toBe(1);
+    expect(await titleOf(sessionId)).toBe('Itchy Rash');
+  });
+
+  it('falls back rather than leaving a conversation unnamed', async () => {
+    const unusable = [
+      ['no summariser', undefined],
+      [
+        'an essay',
+        () =>
+          'This conversation concerns a patient who has described a dermatological complaint and wishes to arrange an appointment at their earliest convenience.',
+      ],
+      ['nothing at all', () => '   '],
+      ['a rejection', () => Promise.reject(new Error('upstream is down'))],
+      ['the prompt’s own escape hatch', () => 'New Conversation'],
+    ];
+
+    for (const [label, summary] of unusable) {
+      const provider = titlingProvider(greeting(), summary);
+      // Absent rather than failing — this is the offline provider's case.
+      if (summary === undefined) delete provider.summarise;
+      setProviderForTesting(provider);
+
+      const sessionId = await newSession(accessToken);
+      // The turn itself is unaffected, which is the whole point of the fallback.
+      await say(accessToken, sessionId, `Booking: ${label}`).expect(201);
+
+      expect(await titleOf(sessionId)).toBe(`Booking: ${label}`);
+    }
+  });
+
+  it('shortens a long fallback rather than putting a paragraph in the sidebar', async () => {
+    const provider = titlingProvider(greeting(), undefined);
+    delete provider.summarise;
+    setProviderForTesting(provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(
+      accessToken,
+      sessionId,
+      'I would like to book an appointment with a dermatologist about a rash',
+    ).expect(201);
+
+    const title = await titleOf(sessionId);
+    expect(title.length).toBeLessThanOrEqual(40);
+    expect(title.endsWith('…')).toBe(true);
+  });
+});
+
+/**
+ * A conversation is only a conversation once something has been said in it.
+ *
+ * The client now creates the record on the first message rather than when someone opens a
+ * blank chat; this is the server-side half of that promise. Whatever ends up in the table, an
+ * empty one is never listed.
+ */
+describe('empty conversations stay out of the list', () => {
+  const listSessions = (token) =>
+    request(app)
+      .get('/api/chat/sessions')
+      .set({ Authorization: `Bearer ${token}` })
+      .expect(200);
+
+  it('omits a session that has no messages', async () => {
+    await newSession(accessToken);
+
+    const response = await listSessions(accessToken);
+    expect(response.body.data.sessions).toHaveLength(0);
+  });
+
+  it('lists it the moment it has one', async () => {
+    setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'Hello.' })));
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'hello').expect(201);
+
+    const response = await listSessions(accessToken);
+    expect(response.body.data.sessions.map((session) => session.id)).toEqual([sessionId]);
+  });
+});
+
+/**
  * The conversation list is a scrolling sidebar, so it pages by cursor rather than by number.
  *
  * The ordering it pages through is the thing that moves — every message reorders it — so the
@@ -1037,11 +1180,20 @@ describe('session ownership', () => {
  * those wrong by construction, and silently.
  */
 describe('paging through conversations', () => {
-  /** Sessions are created oldest-first, so the last one made is the first one listed. */
+  /**
+   * Sessions are created oldest-first, so the last one made is the first one listed.
+   *
+   * Each is spoken in, because an empty one is not listed at all — a conversation earns its
+   * place in the sidebar by containing something.
+   */
   const seedSessions = async (count) => {
+    setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'Hello.' })));
+
     const ids = [];
     for (let index = 0; index < count; index += 1) {
-      ids.push(await newSession(accessToken));
+      const id = await newSession(accessToken);
+      await say(accessToken, id, `opening message ${index}`).expect(201);
+      ids.push(id);
     }
     return ids;
   };
@@ -1122,18 +1274,20 @@ describe('paging through conversations', () => {
     expect(secondIds.sort()).toEqual(remaining.sort());
   });
 
-  it('puts a brand-new conversation at the top, before it has any messages', async () => {
+  it('puts a conversation at the top the moment it is spoken in', async () => {
     setProviderForTesting(fakeProvider(extraction({ intent: 'greeting', reply: 'hello' })));
 
     const older = await newSession(accessToken);
     await say(accessToken, older, 'hello').expect(201);
 
+    // Created second but silent, so it is not in the list at all yet.
     const fresh = await newSession(accessToken);
+    expect((await listSessions(accessToken)).body.data.sessions.map((s) => s.id)).toEqual([older]);
+
+    await say(accessToken, fresh, 'hello there').expect(201);
 
     const response = await listSessions(accessToken);
-    // Ordering by last_message_at with nulls last sent this one to the bottom — the sidebar
-    // opens it on creation, so it has to be visible where the person is looking.
-    expect(response.body.data.sessions[0].id).toBe(fresh);
+    expect(response.body.data.sessions.map((session) => session.id)).toEqual([fresh, older]);
   });
 
   it('scopes a cursor to the caller', async () => {

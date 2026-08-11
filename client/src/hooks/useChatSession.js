@@ -55,23 +55,39 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
   }, []);
 
   /**
-   * Open a conversation: the one asked for, else the most recent, else a new one.
+   * The in-flight "create this conversation" request, shared by every send that arrives before
+   * it settles.
    *
-   * Resuming rather than always creating means a refresh does not lose the thread, and it
-   * exercises the stored structured payloads — a reloaded conversation still shows its
-   * prefilled forms and doctor cards.
+   * Without it, two quick sends on a blank thread — a double-tapped suggestion, Enter pressed
+   * twice — both read a null id and both create a conversation, and the second message lands
+   * in a thread the person cannot see. The same single-flight shape guards token refresh in
+   * `api/client.js`, for the same reason.
+   */
+  const pendingSessionRef = useRef(null);
+
+  /**
+   * Open the conversation named in the URL, or present an empty one.
+   *
+   * Nothing is created here. A conversation that exists only because someone looked at the
+   * chat page is an empty row in everyone's sidebar and a row in the database that never
+   * earned its place — so an unnamed URL means a blank thread held in memory, and the record
+   * is written when there is a first message to put in it.
+   *
+   * Opening a named conversation is unchanged, and is what makes a refresh keep the thread:
+   * the URL carries the id from the moment the session exists.
    */
   const bootstrap = useCallback(async () => {
     setIsBootstrapping(true);
     setError(null);
     // A draft belongs to the conversation that was open when it started.
     setStreamingTurn(null);
+    pendingSessionRef.current = null;
 
     const open = async (id) => {
       const historyResult = await chatApi.listMessages(id);
       if (!historyResult.ok) {
         // A stale id in the URL (deleted, or someone else's) reads as not-found. Fall back to
-        // resuming rather than showing an error for what is usually just an old bookmark.
+        // a blank thread rather than showing an error for what is usually just an old bookmark.
         if (historyResult.error.code === 'NOT_FOUND') return false;
         setError(historyResult.error.message);
         setIsBootstrapping(false);
@@ -86,29 +102,10 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
 
     if (requestedSessionId && (await open(requestedSessionId))) return;
 
-    const sessionsResult = await chatApi.listSessions();
-    if (!sessionsResult.ok) {
-      setError(sessionsResult.error.message);
-      setIsBootstrapping(false);
-      return;
-    }
-
-    const existing = sessionsResult.data.sessions.find((session) => session.status === 'active');
-    if (existing && (await open(existing.id))) return;
-
-    const created = await chatApi.createSession({});
-    if (!created.ok) {
-      setError(created.error.message);
-      setIsBootstrapping(false);
-      return;
-    }
-
-    setSession(created.data.session.id);
+    setSession(null);
     setMessages([]);
-    onResolvedRef.current?.(created.data.session.id);
     setIsBootstrapping(false);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
-  }, [requestedSessionId, setSession, queryClient]);
+  }, [requestedSessionId, setSession]);
 
   useEffect(() => {
     void bootstrap();
@@ -134,6 +131,11 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
           ? withoutPending
           : [...withoutPending, message];
       });
+      // A conversation only enters the sidebar once it has a message, so this is the moment a
+      // new one should appear there — untitled at first, named a moment later when the reply
+      // lands. Waiting for the reply instead would leave the thread someone is typing in
+      // missing from the list for the length of a model call.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
     };
 
     /**
@@ -202,6 +204,36 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
   }, [socket, queryClient]);
 
   /**
+   * The id to send to, creating the conversation if this is its first message.
+   *
+   * @returns {Promise<string | null>} Null when the conversation could not be created, which
+   *   the caller treats as a failed send rather than sending into nowhere.
+   */
+  const ensureSession = useCallback(async () => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+
+    pendingSessionRef.current ??= chatApi.createSession({}).then((created) => {
+      // Cleared either way: a failure must not leave a rejected promise cached as "the
+      // conversation", or every later send would fail with it.
+      pendingSessionRef.current = null;
+
+      if (!created.ok) {
+        setError(created.error.message);
+        return null;
+      }
+
+      const id = created.data.session.id;
+      setSession(id);
+      // Reflected in the URL immediately, so a refresh a second later reopens the thread the
+      // person is in rather than a blank one.
+      onResolvedRef.current?.(id);
+      return id;
+    });
+
+    return pendingSessionRef.current;
+  }, [setSession]);
+
+  /**
    * Send a message.
    *
    * Prefers the socket, and falls back to the REST endpoint when it is not connected — the
@@ -211,7 +243,7 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
   const sendMessage = useCallback(
     async (content) => {
       const trimmed = content.trim();
-      if (!trimmed || !sessionIdRef.current) return;
+      if (!trimmed) return;
 
       setError(null);
       setIsAwaitingReply(true);
@@ -227,15 +259,24 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
       };
       setMessages((current) => [...current, optimistic]);
 
+      // This is where a blank thread becomes a real conversation — on the first message and
+      // never before it.
+      const targetSessionId = await ensureSession();
+      if (!targetSessionId) {
+        setIsAwaitingReply(false);
+        setMessages((current) => current.filter((message) => !message.isPending));
+        return;
+      }
+
       if (socket && socketStatus === SOCKET_STATUS.CONNECTED) {
         socket.emit(SOCKET_EVENTS.MESSAGE_SEND, {
-          sessionId: sessionIdRef.current,
+          sessionId: targetSessionId,
           content: trimmed,
         });
         return;
       }
 
-      const result = await chatApi.sendMessage(sessionIdRef.current, { content: trimmed });
+      const result = await chatApi.sendMessage(targetSessionId, { content: trimmed });
 
       if (!result.ok) {
         setError(result.error.message);
@@ -251,25 +292,12 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
       ]);
       setIsAwaitingReply(false);
       void queryClient.invalidateQueries({ queryKey: queryKeys.appointments.all });
+      // The REST path has no socket events, so the sidebar is told here instead — this is the
+      // turn that gave the conversation both its first message and its name.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
     },
-    [socket, socketStatus, queryClient],
+    [socket, socketStatus, queryClient, ensureSession],
   );
-
-  /** Leave this conversation and start a fresh one. */
-  const startNewConversation = useCallback(async () => {
-    const created = await chatApi.createSession({});
-    if (!created.ok) {
-      setError(created.error.message);
-      return null;
-    }
-    setSession(created.data.session.id);
-    setMessages([]);
-    setError(null);
-    setStreamingTurn(null);
-    onResolvedRef.current?.(created.data.session.id);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
-    return created.data.session.id;
-  }, [setSession, queryClient]);
 
   return {
     sessionId,
@@ -285,7 +313,6 @@ export const useChatSession = (requestedSessionId = null, onSessionResolved = nu
     error,
     socketStatus,
     sendMessage,
-    startNewConversation,
     retry: bootstrap,
   };
 };

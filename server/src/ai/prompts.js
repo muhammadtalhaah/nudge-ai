@@ -78,6 +78,45 @@ const describeDraft = (draft) => {
 };
 
 /**
+ * The prompt for naming a conversation.
+ *
+ * Deliberately a separate, tiny call rather than another field on the extraction. The
+ * extraction contract is what a booking is built from and every field in it is acted on; a
+ * label for a sidebar row is not, and bolting it on would mean a malformed title could fail
+ * validation and cost someone their turn. Here the worst case is no title.
+ *
+ * It is given only the opening exchange because that is what a title is *of* — a conversation
+ * named from its tenth message would rename itself as it went, and the row someone is looking
+ * for would keep moving.
+ *
+ * @param {string} userMessage The first thing the person said.
+ * @param {string} assistantReply What the assistant answered, for context.
+ * @returns {string}
+ */
+export const buildTitlePrompt = (userMessage, assistantReply) =>
+  `Write a title for this conversation with a medical clinic's booking assistant.
+
+THE CONVERSATION SO FAR
+Person: ${userMessage}
+Assistant: ${assistantReply}
+
+RULES
+- Two to five words. It is a sidebar label, not a sentence.
+- Name what the person wants, not what the assistant said.
+- Title Case. No quotes, no full stop, no emoji, no markdown.
+- Never include a person's name, a date, a time, or any medical detail beyond the reason for
+  the visit — this label is visible in a list and must not disclose more than it needs to.
+- If the conversation is too vague to name, answer exactly: New Conversation
+
+Examples:
+  "I have an itchy rash on my arm"        -> Itchy Rash
+  "book me in with a cardiologist"        -> Cardiology Appointment
+  "what have I got booked?"               -> Upcoming Appointments
+  "can I move Thursday to next week"      -> Reschedule Request
+
+Reply with the title and nothing else.`;
+
+/**
  * @param {import('./provider.js').CompletionContext} context
  * @param {string} businessName
  * @returns {string}
