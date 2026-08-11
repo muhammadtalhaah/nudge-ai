@@ -7,8 +7,10 @@ prefilled form whenever the model cannot get all the way there.
 Built as a technical assessment. The emphasis is on architecture, service boundaries, and
 defensible decisions rather than feature count.
 
-**Live demo:** _not yet deployed — see [Deployment](#deployment). `render.yaml` and a
-`Dockerfile` are in the repo, ready to point at a host._
+**Live demo:** **https://nudge-ai-n662.onrender.com** — running the real model. It is on a free
+instance, so the first request after a period of inactivity wakes the container and can take
+up to a minute; everything after that is immediate. See [Deployment](#deployment) for how it
+is wired.
 
 ---
 
