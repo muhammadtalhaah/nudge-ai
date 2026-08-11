@@ -33,3 +33,4 @@ coverage/
 /scripts/
 .editorconfig
 Dockerfile
+CLAUDE.md
