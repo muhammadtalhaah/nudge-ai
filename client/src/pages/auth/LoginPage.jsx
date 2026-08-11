@@ -108,7 +108,12 @@ const LoginPage = () => {
             {errors.password ? <FieldError>{errors.password.message}</FieldError> : null}
           </Field>
 
-          <Button type="submit" className="w-full" disabled={isSubmitting || !isValid}>
+          {/* text-* also colours the spinner, which strokes in currentColor. */}
+          <Button
+            type="submit"
+            className="w-full text-primary-foreground-inverted"
+            disabled={isSubmitting || !isValid}
+          >
             {isSubmitting ? (
               <Spinner role={undefined} aria-label={undefined} aria-hidden="true" />
             ) : null}

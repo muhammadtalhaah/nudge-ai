@@ -57,7 +57,11 @@ function FieldGroup({
   );
 }
 
-const fieldVariants = cva("group/field flex w-full gap-3 data-[invalid=true]:text-destructive", {
+// Upstream also sets a destructive text colour on this wrapper for the invalid state, which
+// every descendant then inherits — label, icons, description and helper text all turn red at
+// once. Dropped so the error state is carried by exactly two things: the control's own border
+// and the FieldError message, each of which styles itself.
+const fieldVariants = cva("group/field flex w-full gap-3", {
   variants: {
     orientation: {
       vertical: ["flex-col [&>*]:w-full [&>.sr-only]:w-auto"],

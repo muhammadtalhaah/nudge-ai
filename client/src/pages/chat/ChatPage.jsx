@@ -169,7 +169,12 @@ const ChatPage = () => {
             // are now unbubbled, so line length is what keeps them readable.
             <div className="mx-auto w-full max-w-3xl space-y-6">
               {messages.map((message, index) => (
-                <ChatMessage key={message.id} isFirst={index === 0} isLast={index === messages.length - 1} message={message} />
+                <ChatMessage
+                  key={message.id}
+                  isFirst={index === 0}
+                  isLast={index === messages.length - 1}
+                  message={message}
+                />
               ))}
 
               {/* Once prose is arriving it replaces the dots — the reply itself is the better

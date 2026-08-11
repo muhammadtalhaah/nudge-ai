@@ -40,6 +40,17 @@
   --popover-foreground: oklch(0.22 0 0);
 
   /**
+   * Text selection.
+   *
+   * Without this the browser paints its own opaque system highlight — a solid blue that
+   * belongs to no part of this palette and hides the glyphs under it. A low-alpha wash of
+   * the accent tints the text instead of covering it. Deliberately alpha rather than a
+   * solid tint: it has to sit on the page, on a card and inside an input without a
+   * per-surface variant.
+   */
+  --selection: oklch(61.852% 0.16067 42.82 / 22%);
+
+  /**
    * The accent, measured from the reference's send control (#FF5F2E).
    *
    * Its foreground is near-black, not white, and that is a measurement rather than a taste:
@@ -49,6 +60,16 @@
    */
   --primary: oklch(61.852% 0.16067 42.82);
   --primary-foreground: oklch(0.19 0.015 40);
+
+  /**
+   * White label + icon for the accent fill, requested for the auth submit buttons.
+   *
+   * Separate from --primary-foreground above rather than replacing it, because it is the
+   * 3.03:1 pairing that block rules out. Kept to the two buttons that asked for it so the
+   * rest of the app keeps the AA-passing default; anything adopting this token is opting
+   * out of AA on the accent.
+   */
+  --primary-foreground-inverted: oklch(1 0 0);
 
   --secondary: oklch(0.946 0 0); /* #EDEDED */
   --secondary-foreground: oklch(0.22 0 0);
@@ -120,10 +141,15 @@
   --popover: oklch(0.285 0 0); /* #2A2A2A — floats above everything */
   --popover-foreground: oklch(0.943 0 0);
 
+  /* Same wash, lifted: 22% of the accent disappears against a near-black page, where light
+     mode only needed enough to register on white. */
+  --selection: oklch(0.689 0.204 37 / 32%);
+
   /* Identical in both themes: the accent is the constant the rest of the palette moves
      around. See the note in :root for why its foreground is dark. */
   --primary: oklch(0.689 0.204 37);
   --primary-foreground: oklch(0.19 0.015 40);
+  --primary-foreground-inverted: oklch(1 0 0);
 
   /* #303030 — the raised surface: user bubbles, the composer, the selected conversation. */
   --secondary: oklch(0.309 0 0);
@@ -194,6 +220,7 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-foreground-inverted: var(--primary-foreground-inverted);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -275,6 +302,16 @@
   /* Visible focus for keyboard users on every interactive element. */
   :focus-visible {
     @apply outline-ring outline-2 outline-offset-2;
+  }
+
+  /**
+   * Only the background is set. Leaving `color` alone means the selected text keeps
+   * whichever foreground its surface already gave it, so this single rule reads correctly
+   * on the page, inside an input, on a filled accent button and in a status chip — none of
+   * which share a text colour. Naming a colour here would have to be wrong for most of them.
+   */
+  ::selection {
+    background-color: var(--selection);
   }
 
   /* Respect a user's reduced-motion preference rather than animating regardless. */
