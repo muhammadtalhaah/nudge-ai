@@ -55,9 +55,13 @@ when a key is present and the offline assistant when it is not.
 | `npm run build`                             | Builds the client (the server runs from source — no build step)          |
 | `npm start`                                 | Runs the server for production (serves API **and** client from one port) |
 | `npm test`                                  | Full suite — server (real Postgres) then client (jsdom)                  |
+| `npm -w client run test`                    | Client suite only — no database needed                                   |
 | `npm run db:setup` / `db:seed` / `db:reset` | Schema, sample data, drop-and-recreate                                   |
-| `npm run format`                            | Prettier                                                                 |
-| `node scripts/browserSmoke.mjs`             | Drives the running app in Chrome, writes screenshots                     |
+| `npm run db:deploy`                         | Schema + tenant fixtures, idempotent — what production runs on boot      |
+| `npm run format` / `format:check`           | Prettier, write or verify                                                |
+
+Every script is defined at the root and delegates to the workspace that owns it, so all of them
+run from the repo root.
 
 ---
 
@@ -371,8 +375,9 @@ client. No workspace package, no watch task, no `dist` to go stale, and a valida
 cannot disagree between browser and API.
 
 **JavaScript end to end, with validation at the edges.** Both packages are plain ES modules,
-so the server runs straight from source — no compile step in dev, in test, or in the
-container. Correctness at the boundaries is enforced at run time instead of at compile time,
+so the server runs straight from source — no compile step in dev, in test, or in production,
+where `npm run build` builds only the client. Correctness at the boundaries is enforced at run
+time instead of at compile time,
 which is where it actually matters: every request body, query string and model response is
 parsed through a Zod schema before any other code sees it, and the shapes that are documentation
 rather than enforcement (the chat reply contract, the AI provider interface) are JSDoc typedefs
@@ -428,19 +433,19 @@ Deliberate scope choices, not oversights.
   not exist here) and an esbuild dev-server issue that is Windows-only and dev-only. Both are
   on the latest published versions; downgrading react-router to "fix" the first would
   reintroduce fourteen older advisories.
-
-**Environment note.** This was built on macOS 12, where Playwright cannot install its own
-Chromium. `scripts/browserSmoke.mjs` therefore drives the system Google Chrome via
-`channel: 'chrome'`.
+- **No container build.** There is no `Dockerfile` — `Dockerfile` is listed in
+  [.gitignore](.gitignore) and none is committed. Render is the supported deploy path; a
+  container would need one written first. Nothing in the app depends on it, since the server
+  runs straight from source.
 
 ---
 
 ## Testing
 
 ```bash
-npm test                       # everything
+npm test                       # everything — server first, then client
 npm test --workspace server    # 144 tests, integration ones against real Postgres
-npm test --workspace client    # 47 component/unit tests in jsdom
+npm test --workspace client    # 47 component/unit tests in jsdom — needs no database
 ```
 
 Server tests use a separate `nudge_ai_test` database (auto-derived from `DATABASE_URL`, with a
@@ -470,12 +475,18 @@ The tests worth reading:
   inside an earlier value, a nested key of the same name, `"reply": null`, and a response cut
   off mid-sentence.
 
-**Browser smoke test.** `node scripts/browserSmoke.mjs` (with the app running) drives Chrome
-through login, inline validation, the theme toggle, a conversational booking, the appointments
-table, cancellation, a reload, and the mobile card layout — writing screenshots to
-`.smoke-shots/` and failing on any console error. It found four real bugs during development,
-including a resolver/Zod incompatibility and a timezone double-formatting defect where the
-chat prose said "10:00" above a card reading "15:00".
+**Browser smoke test — a development tool, not part of the repo.** A Playwright script drove
+Chrome through login, inline validation, the theme toggle, a conversational booking, the
+appointments table, cancellation, a reload, and the mobile card layout, writing screenshots to
+`.smoke-shots/` and failing on any console error. It found four real bugs, including a
+resolver/Zod incompatibility and a timezone double-formatting defect where the chat prose said
+"10:00" above a card reading "15:00" — both fixed and covered by the suites above.
+
+It lived at `scripts/browserSmoke.mjs`, which [.gitignore](.gitignore) excludes along with
+`.smoke-shots/`, so **it is not in a clone and there is nothing to run.** It is recorded here
+because those four defects shaped the code, not as a command to try. Reproducing it needs the
+script rewritten; on macOS 12 Playwright cannot install its own Chromium, so it drove the system
+Google Chrome via `channel: 'chrome'`.
 
 ---
 
@@ -519,12 +530,10 @@ The schema needs no manual step: `startCommand` runs `npm run db:deploy` before 
 applying [db/schema.sql](db/schema.sql) and re-applying the tenant fixtures idempotently on
 each boot — including after every free-plan spin-down.
 
-**Docker** anywhere else:
-
-```bash
-docker build -t nudge-ai .
-docker run -p 4000:4000 --env-file server/.env nudge-ai
-```
+**Anywhere else.** The service is a plain Node process with no build artefact of its own — run
+`npm ci --include=dev && npm run build` once, then `npm run db:deploy && npm start` with the
+environment from [render.yaml](render.yaml). No `Dockerfile` ships with the repo (see
+[limitations](#assumptions-and-known-limitations)), so a container image would need one written.
 
 Either way one service serves the API, the WebSocket, and the client from a single origin.
 
@@ -535,25 +544,41 @@ Either way one service serves the API, the WebSocket, and the client from a sing
 ```
 shared/            Zod schemas + constants, imported by client and server
 db/                schema.sql, seed-tenant.sql, seed-demo.sql
-server/src/
-  routes/          middleware + validation + controller wiring only
-  controllers/     HTTP ↔ service translation
-  services/        business rules and transactions
-  repositories/    SQL and row→camelCase mapping
-  ai/              provider boundary, prompts, extraction guard, date parsing
-  middlewares/     requireAuth, validate, rateLimit, requestId, errorHandler
-  db/              pool, transaction helper
-  errors/          AppError hierarchy, pg error translation
+server/
+  scripts/         dbSetup, dbSeed, dbDeploy — the db:* npm scripts
+  src/
+    app.js         Express app assembly
+    server.js      process entry: listen, graceful shutdown
+    socket.js      Socket.IO auth + handlers — transport only
+    routes/        middleware + validation + controller wiring only
+    controllers/   HTTP ↔ service translation
+    services/      business rules and transactions
+    repositories/  SQL and row→camelCase mapping
+    ai/            provider boundary, prompts, extraction guard, date parsing,
+                   replyStream.js (incremental JSON scanner), title.js (naming)
+    middlewares/   requireAuth, validate, rateLimit, requestId, errorHandler
+    db/            pool, transaction helper
+    errors/        AppError hierarchy, pg error translation
+    config/        env.js — parses and validates process.env at boot
+    logger/        pino setup
+    utils/         cookies, cursor (pagination), httpResponse, password, tokens
+    test/          setup + helpers for the real-database suites
 client/src/
+  main.jsx         entry
+  App.jsx          provider composition
+  navigations/     AppRouter — route table and auth gating
+  layouts/         AppLayout (sidebar shell), AuthLayout
   pages/           one folder per screen — route containers only
-  components/ui/   shadcn primitives (generated)
+  components/ui/   shadcn primitives (generated — left byte-identical to upstream)
   components/shared/  wrappers that own repeated decisions
   components/<feature>/  presentational components for one screen (chat/, appointments/)
   api/             apisauce client with single-flight 401 refresh
-  hooks/           TanStack Query hooks, socket lifecycle
+  hooks/           TanStack Query hooks, socket lifecycle, infinite scroll
   context/         auth, theme, layout (sidebar open/closed)
+  config/          constants, queryKeys — the TanStack cache key registry
+  utils/           formatDate, serverErrors (maps `details` onto form fields)
+  lib/             cn() and other shadcn-required helpers
   styles/theme.css THE design token layer — a restyle touches only this file
-scripts/           browserSmoke.mjs
 ```
 
 `client/src/styles/theme.css` is the single file a visual redesign touches. No feature
