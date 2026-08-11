@@ -61,8 +61,17 @@ const notify = (hook, value) => {
   }
 };
 
-/** @returns {import('../../../shared/chat.js').ChatAppointmentSummary} */
-const toAppointmentSummary = (appointment) => ({
+/**
+ * The client-facing view of an appointment.
+ *
+ * Exported because it is also the payload of the `appointment:created` socket event, which the
+ * REST layer emits for a booking made in the in-chat form. One mapper keeps both routes into a
+ * booking sending the same shape, and keeps internal columns — the tenant id, the source, the
+ * cancellation fields — off the wire.
+ *
+ * @returns {import('../../../shared/chat.js').ChatAppointmentSummary}
+ */
+export const toAppointmentSummary = (appointment) => ({
   id: appointment.id,
   providerName: appointment.providerName,
   providerSpecialty: appointment.providerSpecialty,
@@ -159,6 +168,53 @@ export const getOwnedSession = async (caller, sessionId) => {
 export const getMessages = async (caller, sessionId) => {
   await getOwnedSession(caller, sessionId);
   return chatRepository.listMessages(pool, sessionId);
+};
+
+/**
+ * Record a booking that was completed in the structured form, as a turn of the conversation.
+ *
+ * The form is the assistant's fallback path — it is rendered inside a chat bubble and it
+ * answers a question the assistant asked — so a booking made in it is part of the conversation
+ * and not a silent side effect of it. Without this, the only trace was a toast: gone on the
+ * next render, absent on reload, and leaving the thread ending on the question rather than the
+ * answer.
+ *
+ * The payload is the same `APPOINTMENT_CREATED` reply the conversational path produces, built
+ * here from the appointment row that was just written — so the client renders one confirmation
+ * for both routes into a booking, and the model has authored none of it.
+ *
+ * It also ends the booking draft: `findBookingDraft` treats an `APPOINTMENT_CREATED` reply as
+ * the end of what is in progress, so the next vague message cannot book this appointment again.
+ *
+ * @param {import('./appointmentService.js').Caller} caller
+ * @param {string} sessionId
+ * @param {object} appointment As returned by `appointmentService.book`.
+ * @returns {Promise<{ message: object,
+ *   reply: import('../../../shared/chat.js').ChatReply }>}
+ */
+export const recordFormBooking = async (caller, sessionId, appointment) => {
+  const session = await getOwnedSession(caller, sessionId);
+
+  /** @type {import('../../../shared/chat.js').ChatReply} */
+  const reply = {
+    kind: REPLY_KIND.APPOINTMENT_CREATED,
+    // No date or time in the prose, for the same reason the conversational path omits them:
+    // the server only knows the clinic's timezone, and the card below is rendered in the
+    // viewer's. Times are formatted in exactly one place.
+    text: `Booked with ${appointment.providerName}. The details are below, and it is now in your appointments.`,
+    appointment: toAppointmentSummary(appointment),
+  };
+
+  const message = await withTransaction(async (tx) =>
+    chatRepository.addMessage(tx, {
+      sessionId: session.id,
+      role: CHAT_ROLES.ASSISTANT,
+      content: reply.text,
+      extractedData: reply,
+    }),
+  );
+
+  return { message, reply };
 };
 
 /* --------------------------------------------------------------- the AI turn ---- */
@@ -265,10 +321,36 @@ const mergeDraft = (draft, fields) => {
 /**
  * Build the form-fallback reply: prose, whatever was understood, and what is still needed.
  *
+ * Reserved for the turns where asking again would not help — the extraction failed, the person
+ * named a doctor that matches nothing, or the clinic refused the slot. Everything that is merely
+ * an unanswered question goes through `needsDetail` instead.
+ *
  * @returns {import('../../../shared/chat.js').ChatReply}
  */
 const formFallback = (text, prefill, missing, extras = {}) => ({
   kind: REPLY_KIND.FORM_FALLBACK,
+  text,
+  prefill,
+  missing,
+  ...extras,
+});
+
+/**
+ * Build the still-gathering reply: the same payload, asked as a question.
+ *
+ * This is the ordinary way an incomplete booking advances. The assistant has a resolved-enough
+ * draft and one clear thing to ask, so it asks — the client shows the sentence and keeps the
+ * form closed behind it. Handing over a booking form to find out which day someone wants makes
+ * the assistant a wrapper around the form it was supposed to replace.
+ *
+ * The payload is identical to a form fallback on purpose: `missing` still marks the fields, the
+ * prefill still carries what is settled, and `findBookingDraft` reads both kinds the same way —
+ * so nothing is lost if the person opens the form anyway.
+ *
+ * @returns {import('../../../shared/chat.js').ChatReply}
+ */
+const needsDetail = (text, prefill, missing, extras = {}) => ({
+  kind: REPLY_KIND.NEEDS_DETAIL,
   text,
   prefill,
   missing,
@@ -315,7 +397,7 @@ const actOnAvailability = async (caller, extraction, context) => {
   // Availability is per-doctor, so "when are you free this week?" cannot be answered as
   // asked. Showing the doctors is the useful half of the answer.
   if (resolution.status !== 'resolved') {
-    return formFallback(
+    return needsDetail(
       resolution.status === 'ambiguous'
         ? 'Several of our doctors match that — whose availability would you like?'
         : `${extraction.reply} Which doctor did you have in mind?`,
@@ -332,8 +414,16 @@ const actOnAvailability = async (caller, extraction, context) => {
 
   const provider = resolution.provider;
 
+  /*
+   * Somebody asked what a doctor's free times are and did not say which day.
+   *
+   * This is a question, and the answer is another question — not a booking form. Opening one
+   * here was the worst of the lot: they had asked for information, had not asked to book
+   * anything, and were handed a form with a Confirm booking button under a sentence saying
+   * "which day shall I check?".
+   */
   if (!fields.date) {
-    return formFallback(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
+    return needsDetail(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
       providers: [toProviderSummary(provider)],
     });
   }
@@ -343,7 +433,7 @@ const actOnAvailability = async (caller, extraction, context) => {
   if (slots.length === 0) {
     // The date is dropped from what carries forward — it is the part that did not work, and
     // leaving it in would have the next vague turn ask about the same full day.
-    return formFallback(
+    return needsDetail(
       `${provider.fullName} has nothing free that day. Would another day work?`,
       { ...prefill, date: null },
       ['date'],
@@ -464,9 +554,19 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     return !fields[field];
   });
 
+  /*
+   * No doctor yet, and the two reasons for that are not the same turn.
+   *
+   * Naming one we cannot match is the brief's ambiguous input: repeating the question would
+   * invite the same unmatchable answer, so the form opens with the real list to choose from.
+   * Naming nobody at all is just a question not yet asked, so it is asked.
+   */
   if (resolution.status === 'unknown') {
-    return formFallback(
-      fields.specialty || fields.providerName
+    const namedSomeone = Boolean(fields.specialty || fields.providerName);
+    const ask = namedSomeone ? formFallback : needsDetail;
+
+    return ask(
+      namedSomeone
         ? `I could not match that to one of our doctors. ${extraction.reply}`
         : extraction.reply,
       prefill,
@@ -475,8 +575,9 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     );
   }
 
+  // Two or three candidates is a question with the answers already on screen as cards.
   if (resolution.status === 'ambiguous') {
-    return formFallback(
+    return needsDetail(
       'Several of our doctors match that — which would you prefer?',
       prefill,
       ['providerName'],
@@ -484,9 +585,9 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     );
   }
 
-  // Provider is known; a date and time are still required.
+  // Provider is known; a date and time are still required. The assistant asks for them.
   if (!fields.date || !fields.time) {
-    return formFallback(extraction.reply, prefill, stillMissing, {
+    return needsDetail(extraction.reply, prefill, stillMissing, {
       providers: [toProviderSummary(resolution.provider)],
     });
   }
@@ -733,6 +834,7 @@ export default {
   listSessions,
   getOwnedSession,
   getMessages,
+  recordFormBooking,
   handleMessage,
   describeProvider,
 };

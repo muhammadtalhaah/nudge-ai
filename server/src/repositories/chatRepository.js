@@ -197,9 +197,12 @@ export const findLastReplyKind = async (executor, sessionId) => {
  * The reply payload is already persisted so the UI can replay a conversation, and a second
  * copy of the same facts would only be somewhere for the two to disagree.
  *
- * Any reply kind that prefills something contributes — the booking form and a list of free
- * slots settle exactly the same kind of fact, and a slot list is how "and Friday?" keeps hold
- * of whose Friday. Two rules then make it correct:
+ * Any reply kind that prefills something contributes — a question the assistant asked in prose,
+ * the booking form and a list of free slots all settle exactly the same kind of fact, and a slot
+ * list is how "and Friday?" keeps hold of whose Friday. `NEEDS_DETAIL` is in that list for the
+ * same reason as the rest: it is the ordinary way an incomplete booking advances, so leaving it
+ * out would make asking "which day?" conversationally forget the doctor it just asked about.
+ * Two rules then make it correct:
  *
  *   A completed booking ends the draft. Without that, the details of the appointment someone
  *   just booked linger, and the next vague message books it again.
@@ -221,7 +224,15 @@ export const findBookingDraft = async (executor, sessionId) => {
         AND extracted_data->>'kind' = ANY($2)
       ORDER BY created_at DESC, id DESC
       LIMIT 1`,
-    [sessionId, [REPLY_KIND.FORM_FALLBACK, REPLY_KIND.SLOT_LIST, REPLY_KIND.APPOINTMENT_CREATED]],
+    [
+      sessionId,
+      [
+        REPLY_KIND.NEEDS_DETAIL,
+        REPLY_KIND.FORM_FALLBACK,
+        REPLY_KIND.SLOT_LIST,
+        REPLY_KIND.APPOINTMENT_CREATED,
+      ],
+    ],
   );
 
   const reply = rows[0]?.reply;

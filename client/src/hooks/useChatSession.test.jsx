@@ -220,6 +220,33 @@ describe('opening an existing conversation', () => {
     expect(sendMessage).toHaveBeenCalledWith('session-existing', { content: 'another one' });
   });
 
+  it('appends a turn the server persisted, once', async () => {
+    listMessages.mockResolvedValue({ ok: true, data: { messages: [] } });
+
+    const { result } = renderHook(() => useChatSession('session-existing', null), { wrapper });
+    await waitFor(() => expect(result.current.isBootstrapping).toBe(false));
+
+    // The in-chat booking form completes over REST and gets its confirmation turn back in the
+    // response, so there is no chat event to carry it into the thread.
+    const confirmation = {
+      id: 'assistant-booked',
+      role: 'assistant',
+      content: 'Booked with Dr. Samuel Okafor.',
+      createdAt: '',
+      reply: { kind: 'appointment_created', text: 'Booked.', appointment: { id: 'a1' } },
+    };
+
+    act(() => {
+      result.current.appendMessage(confirmation);
+    });
+    // A socket may deliver the same row as well; matching on id is what stops it doubling.
+    act(() => {
+      result.current.appendMessage(confirmation);
+    });
+
+    expect(result.current.messages).toEqual([confirmation]);
+  });
+
   it('falls back to a blank thread when the id in the URL is gone', async () => {
     listMessages.mockResolvedValue({
       ok: false,

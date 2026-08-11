@@ -78,12 +78,27 @@ export const CHAT_INTENT_VALUES = Object.values(CHAT_INTENTS);
 export const BOOKING_FIELDS = ['specialty', 'providerName', 'date', 'time'];
 
 /**
- * What a chat turn resolved to. `FORM_FALLBACK` is the required behaviour when the model
- * could not extract a complete, unambiguous booking — the client renders the structured
- * form prefilled with whatever was understood.
+ * What a chat turn resolved to.
+ *
+ * `NEEDS_DETAIL` and `FORM_FALLBACK` are both "the booking is not complete yet", and the
+ * difference between them is how the assistant is asking — which is a judgement about the
+ * conversation, so the server makes it rather than the client guessing from the payload:
+ *
+ *   NEEDS_DETAIL — the assistant knows what it is missing and can ask for it in a sentence.
+ *   A day, a time, which of two doctors. The client shows the question; the form is available
+ *   behind it but closed, because opening a booking form to ask "which day?" answers a
+ *   question nobody asked and turns a conversation into data entry.
+ *
+ *   FORM_FALLBACK — the assistant is genuinely stuck, which is the brief's required
+ *   behaviour: the extraction failed, or the person named a doctor that matches nothing, or
+ *   the clinic refused the slot. Asking again in prose would repeat a turn that just failed,
+ *   so the form is opened.
+ *
+ * Both carry the same payload, so the draft machinery treats them identically.
  */
 export const REPLY_KIND = {
   MESSAGE: 'message',
+  NEEDS_DETAIL: 'needs_detail',
   FORM_FALLBACK: 'form_fallback',
   APPOINTMENT_CREATED: 'appointment_created',
   APPOINTMENT_LIST: 'appointment_list',
@@ -107,6 +122,20 @@ export const SOCKET_EVENTS = {
    */
   ASSISTANT_DELTA: 'assistant:delta',
   ASSISTANT_REPLY: 'assistant:reply',
+  /**
+   * A booking, announced to every tab its owner has open.
+   *
+   * Payload: `{ appointment, sessionId?, chatMessage? }`, where `appointment` is a
+   * `ChatAppointmentSummary`.
+   *
+   * The two optional fields carry the conversation turn recorded for a booking finished in the
+   * in-chat form, which completes over REST and so has no assistant reply of its own. They are
+   * absent on the conversational path, where ASSISTANT_REPLY has already delivered that turn —
+   * which is what stops a client appending the same message twice.
+   *
+   * This is the only event emitted from outside the socket handlers; the REST layer reaches it
+   * through `server/src/realtime.js`.
+   */
   APPOINTMENT_CREATED: 'appointment:created',
   ERROR: 'chat:error',
 };

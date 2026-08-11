@@ -8,6 +8,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { assertDatabaseReachable, closePool } from './db/pool.js';
 import { logger } from './logger/index.js';
+import { setRealtimeServer } from './realtime.js';
 import { attachSocketServer } from './socket.js';
 
 const start = async () => {
@@ -22,6 +23,11 @@ const start = async () => {
   const app = createApp();
   const httpServer = createServer(app);
   const io = attachSocketServer(httpServer);
+
+  // The REST layer broadcasts too — a booking made in the in-chat form has to reach the user's
+  // other tabs. Handed over here, at the one place that owns the instance, rather than reached
+  // for from a controller: that would import the transport into the layer above it.
+  setRealtimeServer(io);
 
   httpServer.listen(env.PORT, () => {
     logger.info(

@@ -66,9 +66,14 @@ export const useCreateAppointment = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
+    /**
+     * Resolves with `{ appointment, chatMessage }`. `chatMessage` is the confirmation turn the
+     * server recorded when the booking carried a `chatSessionId`, and null otherwise — the chat
+     * appends it to the thread, and the standalone form ignores it.
+     */
     mutationFn: async (payload) => {
       const result = unwrap(await appointmentsApi.createAppointment(payload));
-      return result.data.appointment;
+      return { appointment: result.data.appointment, chatMessage: result.data.chatMessage ?? null };
     },
     /**
      * Deliberately not optimistic. A booking can be refused by the database (the slot was

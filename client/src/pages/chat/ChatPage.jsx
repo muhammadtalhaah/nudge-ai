@@ -5,9 +5,12 @@
  * useChatSession.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Bot, WifiOff } from 'lucide-react';
+
+import { REPLY_KIND } from '@shared/constants.js';
 
 import ChatComposer from '@/components/chat/ChatComposer';
 import ChatMessage from '@/components/chat/ChatMessage';
@@ -26,6 +29,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
+import { queryKeys } from '@/config/queryKeys';
 import useChatSession from '@/hooks/useChatSession';
 import { SOCKET_STATUS } from '@/hooks/useSocket';
 
@@ -62,6 +66,7 @@ const ChatPage = () => {
   );
 
   const {
+    sessionId,
     messages,
     isBootstrapping,
     isAwaitingReply,
@@ -69,8 +74,45 @@ const ChatPage = () => {
     error,
     socketStatus,
     sendMessage,
+    appendMessage,
     retry,
   } = useChatSession(requestedSessionId, handleSessionResolved);
+
+  const queryClient = useQueryClient();
+
+  /**
+   * A booking finished in the in-chat form.
+   *
+   * The server has already recorded the confirmation as a turn of this conversation and handed
+   * it back, so appending it here is the same row a reload would replay — not a client-authored
+   * message that vanishes on refresh. Its arrival is also what closes the form above it, since
+   * that is derived from the transcript.
+   *
+   * The toast stays: it is the feedback for the standalone form on the appointments page too,
+   * and it confirms the action at the moment of the click. The turn in the thread is what makes
+   * the confirmation part of the conversation rather than a notice that disappears.
+   */
+  const handleBooked = useCallback(
+    (_appointment, chatMessage) => {
+      if (chatMessage) appendMessage(chatMessage);
+      // The conversation's last activity just moved, and the sidebar is ordered by it.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.chat.sessions });
+    },
+    [appendMessage, queryClient],
+  );
+
+  /**
+   * The index of the most recent completed booking, or -1.
+   *
+   * Every booking form earlier in the thread has been answered by it, so none of them should
+   * still be live. Computed once per render rather than per message — the alternative is a
+   * scan of the whole transcript inside the map.
+   */
+  const lastBookedIndex = useMemo(
+    () =>
+      messages.findLastIndex((message) => message.reply?.kind === REPLY_KIND.APPOINTMENT_CREATED),
+    [messages],
+  );
 
   const scrollRef = useRef(null);
   const bottomRef = useRef(null);
@@ -174,6 +216,10 @@ const ChatPage = () => {
                   isFirst={index === 0}
                   isLast={index === messages.length - 1}
                   message={message}
+                  // Lets a booking form inside this turn record itself in this conversation.
+                  chatSessionId={sessionId}
+                  onBooked={handleBooked}
+                  isBookingResolved={lastBookedIndex > index}
                 />
               ))}
 

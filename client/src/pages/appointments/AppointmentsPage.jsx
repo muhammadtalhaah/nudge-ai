@@ -182,7 +182,7 @@ const AppointmentsPage = () => {
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm-tablet:max-w-lg">
           <DialogHeader>
             <DialogTitle>Book an appointment</DialogTitle>
-            <DialogDescription>Choose a doctor, a day and a time.</DialogDescription>
+            <DialogDescription>Choose a provider, a day and a time.</DialogDescription>
           </DialogHeader>
 
           <BookingForm onBooked={() => setIsBookingOpen(false)} />

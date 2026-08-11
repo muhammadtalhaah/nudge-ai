@@ -27,6 +27,7 @@ import { toMessageView } from './controllers/chatController.js';
 import { pool } from './db/pool.js';
 import { AppError } from './errors/AppError.js';
 import { socketLogger } from './logger/index.js';
+import { roomFor } from './realtime.js';
 import userRepository from './repositories/userRepository.js';
 import chatService from './services/chatService.js';
 import { verifyAccessToken } from './utils/tokens.js';
@@ -71,11 +72,11 @@ const startRateLimitCleanup = () => {
   return timer;
 };
 
-/**
- * Each user gets a private room, so a booking confirmation reaches every tab that user has
- * open and nobody else's. Rooms are keyed by user id, never by session id supplied by a client.
+/*
+ * `roomFor` is imported from realtime.js rather than defined here. Both this file and the REST
+ * layer emit into a user's room, and one definition is what stops them drifting onto two keys.
+ * Rooms are keyed by user id, never by a session id supplied by a client.
  */
-const roomFor = (userId) => `user:${userId}`;
 
 /**
  * @param {import('node:http').Server} httpServer

@@ -43,6 +43,7 @@ const weekdayOf = (isoDate) =>
 const describeLastReply = (lastReplyKind) =>
   ({
     message: 'Your last reply was a plain answer.',
+    needs_detail: 'Your last reply asked them for the booking details that are still missing.',
     form_fallback:
       'Your last reply asked for missing booking details and showed a form alongside it.',
     appointment_list: 'Your last reply listed the appointments this person already has.',

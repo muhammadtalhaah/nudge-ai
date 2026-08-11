@@ -90,7 +90,32 @@ describe('AppSidebar', () => {
     // The assistant has no nav link of its own: "New Chat" starts one and the history rows
     // open one, so a third route to the same screen only ever sat permanently selected.
     expect(screen.queryByRole('link', { name: 'Assistant' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /New Chat/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /New Chat/ })).toBeInTheDocument();
+  });
+
+  it('gives every sidebar destination a real href, so it can be opened in a new tab', async () => {
+    renderSidebar();
+
+    /*
+     * The whole sidebar navigates by anchor, including "New Chat" — which was a styled button
+     * and so could not be cmd-clicked, middle-clicked, or opened from the context menu like
+     * everything around it. An href is what makes those work; nothing else does.
+     */
+    const newChat = screen.getByRole('link', { name: /New Chat/ });
+    expect(newChat).toHaveAttribute('href', '/chat');
+    // Still the Button primitive, handed to the anchor by `asChild` — the change is semantic,
+    // so it must not have cost the control its styling.
+    expect(newChat).toHaveAttribute('data-slot', 'button');
+    expect(newChat).toHaveClass('w-full', 'justify-start');
+
+    expect(screen.getByRole('link', { name: 'Appointments' })).toHaveAttribute(
+      'href',
+      '/appointments',
+    );
+    expect(screen.getByRole('link', { name: /Nudge AI/ })).toHaveAttribute('href', '/chat');
+
+    const conversation = await screen.findByRole('link', { name: /Itchy rash on my arm/ });
+    expect(conversation).toHaveAttribute('href', '/chat?session=session-newest');
   });
 
   it('still reaches the assistant from the brand link', async () => {
@@ -148,7 +173,7 @@ describe('AppSidebar', () => {
     const user = userEvent.setup();
 
     renderSidebar('/chat?session=session-older');
-    await user.click(screen.getByRole('button', { name: /New Chat/ }));
+    await user.click(screen.getByRole('link', { name: /New Chat/ }));
 
     // Navigation only: no `?session=`, so the chat page opens an empty thread. The record is
     // written when there is a first message to put in it.

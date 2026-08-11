@@ -32,6 +32,23 @@ const registerUser = async (email) => {
 const book = (token, body) =>
   request(app).post('/api/appointments').set(authorise(token)).send(body);
 
+const newSession = async (token) => {
+  const response = await request(app)
+    .post('/api/chat/sessions')
+    .set(authorise(token))
+    .send({})
+    .expect(201);
+  return response.body.data.session.id;
+};
+
+const transcript = async (token, sessionId) => {
+  const response = await request(app)
+    .get(`/api/chat/sessions/${sessionId}/messages`)
+    .set(authorise(token))
+    .expect(200);
+  return response.body.data.messages;
+};
+
 beforeEach(async () => {
   await resetDatabase();
   tenant = await seedTenant();
@@ -394,5 +411,80 @@ describe('availability', () => {
 
     // Open round the clock at 30-minute slots: a full day is 48 of them, not 96 or 144.
     expect(slots).toHaveLength(48);
+  });
+});
+
+/**
+ * A booking finished in the in-chat form.
+ *
+ * The form is rendered inside a chat bubble and answers a question the assistant asked, so the
+ * booking belongs to that conversation. It used to leave no trace in it at all — the thread
+ * ended on the question, and a reload showed no sign the appointment had ever been made.
+ *
+ * The confirmation is built here from the row that was just written, exactly as the
+ * conversational path builds it, so the model has authored none of it.
+ */
+describe('recording a form booking in its conversation', () => {
+  it('adds a confirmation turn, and returns it with the appointment', async () => {
+    const sessionId = await newSession(accessToken);
+
+    const response = await book(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: futureIso(24),
+      chatSessionId: sessionId,
+    }).expect(201);
+
+    // Returned inline: the form completes over REST and has no socket to deliver this on.
+    const { chatMessage, appointment } = response.body.data;
+    expect(chatMessage.role).toBe('assistant');
+    expect(chatMessage.reply.kind).toBe('appointment_created');
+    expect(chatMessage.reply.appointment.id).toBe(appointment.id);
+    expect(chatMessage.reply.appointment.providerName).toBe(tenant.providerName);
+
+    // Persisted, not just returned — this is what a reload replays.
+    const messages = await transcript(accessToken, sessionId);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe(chatMessage.id);
+    expect(messages[0].reply.kind).toBe('appointment_created');
+
+    /*
+     * No date or time in the prose. The server knows the clinic's timezone and only the browser
+     * knows the viewer's, so the instant travels on the payload and is formatted in exactly one
+     * place. A time in both read as two different appointments.
+     */
+    expect(messages[0].content).toContain(tenant.providerName);
+    expect(messages[0].content).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it('records nothing for a booking made outside a conversation', async () => {
+    const response = await book(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: futureIso(24),
+    }).expect(201);
+
+    // The standalone form on the appointments page has no conversation to write to.
+    expect(response.body.data.chatMessage).toBeNull();
+  });
+
+  it('refuses another user’s conversation, and books nothing', async () => {
+    const theirSession = await newSession(otherAccessToken);
+
+    const response = await book(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: futureIso(24),
+      chatSessionId: theirSession,
+    }).expect(404);
+
+    expect(response.body.error.code).toBe('NOT_FOUND');
+
+    // Checked before the insert, so the refusal costs nothing and leaves nothing behind: no
+    // appointment for the caller, and no turn in a thread that is not theirs.
+    const mine = await request(app)
+      .get('/api/appointments')
+      .set(authorise(accessToken))
+      .expect(200);
+    expect(mine.body.data).toHaveLength(0);
+
+    expect(await transcript(otherAccessToken, theirSession)).toHaveLength(0);
   });
 });

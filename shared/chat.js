@@ -49,9 +49,10 @@
  * @typedef {object} ChatReply
  * @property {string} kind One of REPLY_KIND.
  * @property {string} text Prose shown to the user.
- * @property {BookingFormPrefill} [prefill] Present when kind is FORM_FALLBACK.
+ * @property {BookingFormPrefill} [prefill] Present when kind is NEEDS_DETAIL or FORM_FALLBACK.
  * @property {string[]} [missing] Which booking details are still needed, so the UI can
- *   highlight them. Values come from BOOKING_FIELDS.
+ *   highlight them. Values come from BOOKING_FIELDS. Present on the same two kinds — for
+ *   NEEDS_DETAIL it is also what the assistant's sentence is asking about.
  * @property {ChatProviderSummary[]} [providers] Candidate providers, when the assistant is
  *   helping narrow a choice.
  * @property {ChatAppointmentSummary} [appointment] Set when kind is APPOINTMENT_CREATED.

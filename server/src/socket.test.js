@@ -18,6 +18,7 @@ import { createApp } from './app.js';
 import { setProviderForTesting } from './ai/extraction.js';
 import { createReplyStreamScanner } from './ai/replyStream.js';
 import { pool } from './db/pool.js';
+import { setRealtimeServer } from './realtime.js';
 import { attachSocketServer } from './socket.js';
 import { closeDatabase, resetDatabase, seedTenant } from './test/helpers.js';
 
@@ -106,6 +107,21 @@ const newSession = async (token) => {
   return response.body.data.session.id;
 };
 
+/** Book through the REST API — the path the in-chat booking form takes. */
+const bookOverRest = (token, body) =>
+  request(app)
+    .post('/api/appointments')
+    .set({ Authorization: `Bearer ${token}` })
+    .send(body);
+
+/**
+ * Long enough for an event to have arrived if one was going to.
+ *
+ * Only used by the tests asserting that nothing arrives: without a wait they would pass against
+ * a server that emits correctly but slowly, which is no assertion at all.
+ */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+
 /** Connect a client, resolving on connect and rejecting on a handshake refusal. */
 const connect = (token) =>
   new Promise((resolve, reject) => {
@@ -136,6 +152,9 @@ const waitFor = (client, event, timeoutMs = 8000) =>
 beforeAll(async () => {
   httpServer = createServer(app);
   ioServer = attachSocketServer(httpServer);
+  // This file is its own bootstrap, so it wires the realtime seam exactly as server.js does.
+  // Without it the REST layer has no socket to broadcast on and its emits are no-ops.
+  setRealtimeServer(ioServer);
   await new Promise((resolve) => httpServer.listen(0, resolve));
   port = httpServer.address().port;
 });
@@ -153,6 +172,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  setRealtimeServer(null);
   await ioServer.close();
   await new Promise((resolve) => httpServer.close(() => resolve()));
   await closeDatabase();
@@ -476,6 +496,101 @@ describe('multi-tab delivery', () => {
     await replied;
 
     // Rooms are keyed by user id, so another account's socket sees nothing.
+    expect(leaked).toBe(false);
+  });
+});
+
+/**
+ * A booking made over REST, which is how the in-chat form completes.
+ *
+ * The form has no socket of its own, so before the realtime seam existed a booking made in one
+ * tab was invisible in every other one until a reload. These prove the REST layer now reaches
+ * the same per-user rooms the socket handlers do, with the same event and the same payload.
+ */
+describe('a booking made over REST', () => {
+  it('reaches the user’s other tabs, carrying the confirmation turn', async () => {
+    const sessionId = await newSession(accessToken);
+    const tab = await connect(accessToken);
+
+    const announced = waitFor(tab, SOCKET_EVENTS.APPOINTMENT_CREATED);
+
+    const response = await bookOverRest(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: `${tomorrow()}T10:00:00.000Z`,
+      chatSessionId: sessionId,
+    }).expect(201);
+
+    const payload = await announced;
+
+    // The appointment summary, not a raw row — the same shape the conversational path emits, so
+    // internal columns stay off the wire.
+    expect(payload.appointment.id).toBe(response.body.data.appointment.id);
+    expect(payload.appointment.providerName).toBe(tenant.providerName);
+    expect(payload.appointment).not.toHaveProperty('businessId');
+    expect(payload.appointment).not.toHaveProperty('userId');
+
+    // And the turn the server recorded, so a tab that did not make the booking can append it to
+    // the thread without asking for anything.
+    expect(payload.sessionId).toBe(sessionId);
+    expect(payload.chatMessage.id).toBe(response.body.data.chatMessage.id);
+    expect(payload.chatMessage.role).toBe('assistant');
+    expect(payload.chatMessage.reply.kind).toBe('appointment_created');
+  });
+
+  it('carries no conversation turn when the booking was made outside one', async () => {
+    const tab = await connect(accessToken);
+    const announced = waitFor(tab, SOCKET_EVENTS.APPOINTMENT_CREATED);
+
+    // The standalone form on the appointments page.
+    await bookOverRest(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: `${tomorrow()}T10:00:00.000Z`,
+    }).expect(201);
+
+    const payload = await announced;
+    expect(payload.appointment.providerName).toBe(tenant.providerName);
+    expect(payload.chatMessage).toBeUndefined();
+  });
+
+  it('announces nothing when the booking is refused', async () => {
+    const tab = await connect(accessToken);
+
+    let announced = false;
+    tab.on(SOCKET_EVENTS.APPOINTMENT_CREATED, () => {
+      announced = true;
+    });
+
+    // A past instant, refused by the service before anything is written.
+    await bookOverRest(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: new Date(Date.now() - 3_600_000).toISOString(),
+    }).expect(400);
+
+    await settle();
+    // Nothing happened, so nothing is announced — no tab should show an appointment that the
+    // clinic refused.
+    expect(announced).toBe(false);
+  });
+
+  it('does not reach another user’s tabs', async () => {
+    const mine = await connect(accessToken);
+    const theirs = await connect(otherAccessToken);
+
+    let leaked = false;
+    theirs.on(SOCKET_EVENTS.APPOINTMENT_CREATED, () => {
+      leaked = true;
+    });
+
+    const announced = waitFor(mine, SOCKET_EVENTS.APPOINTMENT_CREATED);
+    await bookOverRest(accessToken, {
+      providerId: tenant.providerId,
+      startsAt: `${tomorrow()}T10:00:00.000Z`,
+    }).expect(201);
+    await announced;
+    await settle();
+
+    // The REST layer addresses the same per-user room as the socket handlers, from the caller's
+    // verified token — so another account's socket sees nothing.
     expect(leaked).toBe(false);
   });
 });

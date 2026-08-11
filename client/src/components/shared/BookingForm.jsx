@@ -39,12 +39,15 @@ import { applyServerErrors } from '@/utils/serverErrors';
 const FIELD_NAMES = ['providerId', 'date', 'time', 'notes'];
 
 /**
- * @param prefill      values extracted by the assistant, if any
- * @param highlight    field names the assistant said were missing, so they can be marked
- * @param onBooked     called with the created appointment
- * @param compact      denser layout for rendering inside a chat bubble
+ * @param prefill       values extracted by the assistant, if any
+ * @param highlight     field names the assistant said were missing, so they can be marked
+ * @param onBooked      called with the created appointment and, when this form belongs to a
+ *                      conversation, the confirmation turn the server recorded in it
+ * @param chatSessionId the conversation this form is rendered in, so a booking made here is
+ *                      recorded as part of it. Absent on the standalone appointments page.
+ * @param compact       denser layout for rendering inside a chat bubble
  */
-const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => {
+const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact = false }) => {
   const {
     data: providers,
     isPending: isLoadingProviders,
@@ -113,9 +116,12 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
         providerId: values.providerId,
         startsAt,
         notes: values.notes?.trim() || undefined,
+        // Only when this form belongs to a conversation. The server authorises the id and
+        // records the confirmation turn it returns below.
+        ...(chatSessionId ? { chatSessionId } : {}),
       })
       .then(
-        (appointment) => ({ ok: true, appointment }),
+        (created) => ({ ok: true, ...created }),
         (error) => ({ ok: false, error }),
       );
 
@@ -124,6 +130,10 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
       // A taken slot is about the time, so point at the field the user must change.
       if (result.error.code === 'SLOT_UNAVAILABLE') {
         setError('time', { type: 'server', message: result.error.message });
+      } else if (result.error.code === 'SLOT_IN_PAST') {
+        // The clinic's clock is the authority on this, and it can disagree with the browser's
+        // by a timezone. Reported on the date, which is the field the rule is about.
+        setError('date', { type: 'server', message: result.error.message });
       } else if (message) {
         setFormError(message);
       }
@@ -132,14 +142,14 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
 
     toast.success(`Booked with ${selectedProvider?.fullName ?? 'your provider'}`);
     reset({ providerId: '', date: '', time: '', notes: '' });
-    onBooked?.(result.appointment);
+    onBooked?.(result.appointment, result.chatMessage ?? null);
   };
 
   if (providersFailed) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
-          Could not load the list of doctors. Please reload the page.
+          Could not load the list of providers. Please reload the page.
         </AlertDescription>
       </Alert>
     );
@@ -160,8 +170,11 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
       ) : null}
 
       <Field data-invalid={Boolean(errors.providerId)}>
+        {/* "Provider" throughout — the label, the placeholder, and the message in
+            `bookingFormSchema`. Labelling it Doctor while the validation asked for a provider
+            read as an error about a field that was not on screen. */}
         <FieldLabel htmlFor="providerId">
-          Doctor
+          Provider
           {isHighlighted('providerName') || isHighlighted('specialty') ? (
             <span className="text-muted-foreground ml-1 text-xs font-normal">· still needed</span>
           ) : null}
@@ -180,7 +193,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
                   aria-invalid={Boolean(errors.providerId)}
                   className="w-full"
                 >
-                  <SelectValue placeholder="Choose a doctor" />
+                  <SelectValue placeholder="Choose a provider" />
                 </SelectTrigger>
                 <SelectContent>
                   {providers?.map((provider) => (
@@ -207,7 +220,14 @@ const BookingForm = ({ prefill, highlight = [], onBooked, compact = false }) => 
           <Input
             id="date"
             type="date"
-            // Stops a past date being selectable at all, rather than only rejecting it later.
+            /*
+             * Greys out every earlier day in the native picker, so a past date cannot be
+             * *selected* at all. It is not the whole guard: `min` does not constrain a typed
+             * date, and this form is `noValidate`, so the browser will not block submit either
+             * — `bookingFormSchema` refuses a past date, and `appointmentService.book` refuses a
+             * past instant behind it. Recomputed each render rather than memoised, so a tab left
+             * open overnight does not still offer yesterday.
+             */
             min={todayIsoDate()}
             aria-invalid={Boolean(errors.date)}
             {...register('date')}
