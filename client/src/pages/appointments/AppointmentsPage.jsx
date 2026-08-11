@@ -10,8 +10,8 @@ import { useSearchParams } from 'react-router-dom';
 import { CalendarPlus, CalendarX2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import AppointmentCardList from './components/AppointmentCardList';
-import AppointmentTable from './components/AppointmentTable';
+import AppointmentCardList from '@/components/appointments/AppointmentCardList';
+import AppointmentTable from '@/components/appointments/AppointmentTable';
 import BookingForm from '@/components/shared/BookingForm';
 import EmptyState from '@/components/shared/EmptyState';
 import ErrorState from '@/components/shared/ErrorState';

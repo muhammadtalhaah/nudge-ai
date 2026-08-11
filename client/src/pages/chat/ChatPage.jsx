@@ -9,10 +9,10 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Bot, WifiOff } from 'lucide-react';
 
-import ChatComposer from './components/ChatComposer';
-import ChatMessage from './components/ChatMessage';
-import StreamingMessage from './components/StreamingMessage';
-import TypingIndicator from './components/TypingIndicator';
+import ChatComposer from '@/components/chat/ChatComposer';
+import ChatMessage from '@/components/chat/ChatMessage';
+import StreamingMessage from '@/components/chat/StreamingMessage';
+import TypingIndicator from '@/components/chat/TypingIndicator';
 import ErrorState from '@/components/shared/ErrorState';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -168,8 +168,8 @@ const ChatPage = () => {
             // A measured column rather than the full width of the page: long assistant replies
             // are now unbubbled, so line length is what keeps them readable.
             <div className="mx-auto w-full max-w-3xl space-y-6">
-              {messages.map((message) => (
-                <ChatMessage key={message.id} message={message} />
+              {messages.map((message, index) => (
+                <ChatMessage key={message.id} isFirst={index === 0} isLast={index === messages.length - 1} message={message} />
               ))}
 
               {/* Once prose is arriving it replaces the dots — the reply itself is the better

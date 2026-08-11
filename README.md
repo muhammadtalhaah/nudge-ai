@@ -518,9 +518,10 @@ server/src/
   db/              pool, transaction helper
   errors/          AppError hierarchy, pg error translation
 client/src/
-  pages/           one folder per screen, with its own components/ and hooks/
+  pages/           one folder per screen — route containers only
   components/ui/   shadcn primitives (generated)
   components/shared/  wrappers that own repeated decisions
+  components/<feature>/  presentational components for one screen (chat/, appointments/)
   api/             apisauce client with single-flight 401 refresh
   hooks/           TanStack Query hooks, socket lifecycle
   context/         auth, theme, layout (sidebar open/closed)

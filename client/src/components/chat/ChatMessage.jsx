@@ -86,7 +86,7 @@ const BookedConfirmation = ({ appointment }) => (
   </div>
 );
 
-const ChatMessage = ({ message, onBooked }) => {
+const ChatMessage = ({ message, onBooked, isFirst, isLast }) => {
   const isUser = message.role === 'user';
   const reply = message.reply;
 
@@ -124,6 +124,8 @@ const ChatMessage = ({ message, onBooked }) => {
             isUser
               ? 'bg-secondary text-secondary-foreground inline-block rounded-3xl px-4 py-2.5'
               : 'text-foreground',
+            isUser && isFirst && 'mt-10',
+            isUser && isLast && 'mb-10',
             message.isPending && 'opacity-60',
           )}
         >
