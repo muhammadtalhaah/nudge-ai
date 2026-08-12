@@ -25,6 +25,11 @@ import providerRepository from '../repositories/providerRepository.js';
  * @property {string} userId
  * @property {string} businessId
  * @property {string} role One of USER_ROLES.
+ * @property {string} [fullName]
+ *   Present on the chat path, which addresses people by name, and read by nothing in this
+ *   module. Optional deliberately: it is a label, not a credential, and listing it as a fourth
+ *   required field would suggest a caller is not complete without one. Nothing here scopes,
+ *   filters or authorises on it.
  */
 
 /** Admins may read across the tenant; everyone else only sees their own records. */

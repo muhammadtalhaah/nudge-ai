@@ -9,11 +9,19 @@
 import chatService from '../services/chatService.js';
 import { sendData } from '../utils/httpResponse.js';
 
-/** @returns {import('../services/appointmentService.js').Caller} */
+/**
+ * The chat surface carries the caller's name as well as their identity — the assistant greets
+ * people by it. It is copied from `req.auth`, which is built from the database row, so it is
+ * subject to exactly the same verification as the ids beside it and grants exactly as much
+ * authority as they do outside their own scope: none.
+ *
+ * @returns {import('../services/appointmentService.js').Caller}
+ */
 const callerFrom = (req) => ({
   userId: req.auth.userId,
   businessId: req.auth.businessId,
   role: req.auth.role,
+  fullName: req.auth.fullName,
 });
 
 const sessionIdParam = (req) => req.params.id;

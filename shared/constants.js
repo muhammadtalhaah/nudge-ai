@@ -68,6 +68,17 @@ export const CHAT_INTENTS = {
   PROVIDERS: 'providers',
   /** Free times for a doctor on a day. */
   AVAILABILITY: 'availability',
+  /**
+   * Someone is telling you how they feel, and has not asked for an appointment yet.
+   *
+   * Split out of `BOOK` because folding the two together is what had "I have a headache"
+   * answered with a booking form. Describing a symptom is the opening of a conversation, not a
+   * request to see someone — so this intent resolves to plain prose and nothing else: no
+   * prefill, no doctor cards, no form. The assistant acknowledges, asks what it needs to, and
+   * offers a doctor once that is actually worth doing. The turn where the person accepts that
+   * offer is the one that returns `BOOK`, and the booking flow is unchanged from there on.
+   */
+  SYMPTOM: 'symptom',
   GREETING: 'greeting',
   OTHER: 'other',
 };

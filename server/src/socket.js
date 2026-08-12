@@ -99,8 +99,9 @@ export const attachSocketServer = (httpServer) => {
    * invalidated by a logout-all or a deactivation. A long-lived connection makes this more
    * important than it is for a single request, not less.
    *
-   * What lands on `socket.data.auth` is the same caller identity requireAuth builds, plus
-   * the email — sockets never carry a client-supplied id.
+   * What lands on `socket.data.auth` is the same caller identity requireAuth builds, down to
+   * the email and the name the assistant greets people by — sockets never carry a
+   * client-supplied id, and never a client-supplied name either.
    */
   io.use(async (socket, next) => {
     try {
@@ -123,6 +124,7 @@ export const attachSocketServer = (httpServer) => {
         businessId: user.businessId,
         role: user.role,
         email: user.email,
+        fullName: user.fullName,
       };
 
       next();

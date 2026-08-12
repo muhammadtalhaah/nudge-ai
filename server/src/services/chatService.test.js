@@ -84,10 +84,10 @@ const extraction = (overrides = {}) =>
 /** A booking turn that understood nothing new — what a bare "yes" or "sure" extracts to. */
 const emptyBookingTurn = (reply) => extraction({ reply });
 
-const registerUser = async (email) => {
+const registerUser = async (email, fullName = 'Test User') => {
   const response = await request(app)
     .post('/api/auth/signup')
-    .send({ fullName: 'Test User', email, password: 'correct horse battery' })
+    .send({ fullName, email, password: 'correct horse battery' })
     .expect(201);
   return response.body.data.accessToken;
 };
@@ -113,7 +113,8 @@ const tomorrow = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().
 /** The identity middleware would build, for the few tests that call the service directly. */
 const callerFor = async (email) => {
   const { rows } = await pool.query(
-    'SELECT id AS "userId", business_id AS "businessId", role FROM users WHERE email = $1',
+    `SELECT id AS "userId", business_id AS "businessId", role, full_name AS "fullName"
+       FROM users WHERE email = $1`,
     [email],
   );
   return rows[0];
@@ -233,6 +234,186 @@ describe('conversational booking', () => {
     expect(reply.kind).toBe('needs_detail');
     expect(reply.providers).toHaveLength(2);
     expect(reply.missing).toEqual(['providerName']);
+  });
+});
+
+/**
+ * Saying hello to somebody by their name, once.
+ *
+ * The assertions are on the *prompt* rather than on the reply, and deliberately so: the greeting
+ * is the model's to write, and a test that pinned the sentence would be testing a fake provider's
+ * canned string. What the server owes is the instruction — the right name, and the fact that this
+ * is or is not the opening turn — and that is a server decision worth holding still.
+ */
+describe('greeting the person by name', () => {
+  it('asks for a greeting on the opening turn and never again', async () => {
+    const script = scriptedProvider(
+      extraction({ intent: 'greeting', reply: 'Hi Ada! How can I help you today?' }),
+      extraction({ intent: 'other', reply: 'I can book, list and cancel appointments.' }),
+    );
+    setProviderForTesting(script.provider);
+
+    const token = await registerUser('ada.lovelace@example.com', 'Ada Lovelace');
+    const sessionId = await newSession(token);
+
+    const first = await say(token, sessionId, 'Hi').expect(201);
+    expect(first.body.data.reply.text).toBe('Hi Ada! How can I help you today?');
+
+    // Their name, not their full name: "Hi Ada" is a greeting and "Hi Ada Lovelace" is a mailshot.
+    expect(script.requests[0].systemPrompt).toContain('This person is called Ada,');
+    expect(script.requests[0].systemPrompt).not.toContain('Lovelace');
+    expect(script.requests[0].systemPrompt).toContain('this is your first reply');
+
+    await say(token, sessionId, 'what can you do?').expect(201);
+
+    expect(script.requests[1].systemPrompt).toContain('You have already greeted them');
+    expect(script.requests[1].systemPrompt).not.toContain('this is your first reply');
+  });
+
+  /**
+   * The whole point of deriving "have we said hello" from the stored transcript rather than from
+   * anything held in memory. A reopened conversation is a fresh process's worth of state, and it
+   * must still know it has already introduced itself.
+   */
+  it('does not greet again when the conversation is reopened later', async () => {
+    const script = scriptedProvider(
+      extraction({ intent: 'greeting', reply: 'Hi Ada! How can I help you today?' }),
+      extraction({ intent: 'other', reply: 'Still here.' }),
+    );
+    setProviderForTesting(script.provider);
+
+    const token = await registerUser('ada.lovelace@example.com', 'Ada Lovelace');
+    const sessionId = await newSession(token);
+
+    await say(token, sessionId, 'Hi').expect(201);
+
+    // What reopening a conversation actually does: read it back, then send the next message.
+    const history = await request(app)
+      .get(`/api/chat/sessions/${sessionId}/messages`)
+      .set({ Authorization: `Bearer ${token}` })
+      .expect(200);
+    expect(history.body.data.messages).toHaveLength(2);
+
+    await say(token, sessionId, 'are you still there?').expect(201);
+
+    expect(script.requests[1].systemPrompt).toContain('You have already greeted them');
+  });
+
+  it('tells the model it has no name rather than greeting a blank', async () => {
+    const script = scriptedProvider(extraction({ intent: 'greeting', reply: 'Hello.' }));
+    setProviderForTesting(script.provider);
+
+    // A name made entirely of characters that are not part of a name leaves nothing to say.
+    const token = await registerUser('anon@example.com', '!!! ???');
+    await say(token, await newSession(token), 'Hi').expect(201);
+
+    expect(script.requests[0].systemPrompt).toContain('You do not know this person’s name');
+  });
+});
+
+/**
+ * Talking to somebody before booking anything for them.
+ *
+ * The behaviour being protected is a negative one: describing a symptom must not produce a
+ * booking form, a prefill, or a row of doctor cards. Those are answers to a request nobody has
+ * made yet, and handing one over is what made the assistant feel like a form with a chat window
+ * bolted to it.
+ */
+describe('talking before booking', () => {
+  it('answers a symptom with prose and nothing else', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'symptom',
+          reply: 'That sounds rotten. How long has the headache been going on?',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'I have had a headache all day',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('message');
+    expect(reply.text).toBe('That sounds rotten. How long has the headache been going on?');
+    expect(reply.prefill).toBeUndefined();
+    expect(reply.missing).toBeUndefined();
+    expect(reply.providers).toBeUndefined();
+  });
+
+  /**
+   * A conversation about a headache settles no booking facts, so it must leave none behind —
+   * otherwise the specialty the model guessed at while listening becomes a booking in progress,
+   * and the next vague message advances it.
+   */
+  it('leaves no booking in progress behind it', async () => {
+    const script = scriptedProvider(
+      extraction({
+        intent: 'symptom',
+        fields: { specialty: 'Dermatology', providerName: null, date: null, time: null },
+        reply: 'How long has your skin been like that?',
+      }),
+      extraction({ intent: 'symptom', reply: 'That is worth having looked at.' }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'my skin has been itchy').expect(201);
+    await say(accessToken, sessionId, 'about a week').expect(201);
+
+    expect(script.requests[1].systemPrompt).toContain('no booking is in progress');
+  });
+
+  it('carries the conversation into the prompt so nothing has to be repeated', async () => {
+    const script = scriptedProvider(
+      extraction({ intent: 'symptom', reply: 'How long has that been going on?' }),
+      extraction({ intent: 'symptom', reply: 'That is long enough to be worth a look.' }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'I have had a headache all day').expect(201);
+    await say(accessToken, sessionId, 'since Tuesday').expect(201);
+
+    // The turn just sent is the `userMessage`, so history is everything before it.
+    expect(script.requests[1].history).toEqual([
+      { role: 'user', content: 'I have had a headache all day' },
+      { role: 'assistant', content: 'How long has that been going on?' },
+    ]);
+    expect(script.requests[1].userMessage).toBe('since Tuesday');
+  });
+
+  it('starts the ordinary booking flow once the person accepts the offer', async () => {
+    const script = scriptedProvider(
+      extraction({
+        intent: 'symptom',
+        reply: 'That is worth having looked at — would you like me to find you a doctor?',
+      }),
+      extraction({
+        intent: 'book',
+        fields: { specialty: 'Dermatology', providerName: null, date: null, time: null },
+        missing: ['date', 'time'],
+        reply: 'Of course. Which day suits you?',
+      }),
+    );
+    setProviderForTesting(script.provider);
+
+    const sessionId = await newSession(accessToken);
+    await say(accessToken, sessionId, 'my skin has been itchy for a fortnight').expect(201);
+    const response = await say(accessToken, sessionId, 'yes please').expect(201);
+    const { reply } = response.body.data;
+
+    // The existing path, unchanged: the specialty resolves to a real doctor and the assistant
+    // asks for what is genuinely still missing.
+    expect(reply.kind).toBe('needs_detail');
+    expect(reply.providers.map((provider) => provider.fullName)).toEqual([
+      tenant.otherProviderName,
+    ]);
+    expect(reply.missing).toEqual(['date', 'time']);
+    expect(reply.prefill.specialty).toBe('Dermatology');
   });
 });
 

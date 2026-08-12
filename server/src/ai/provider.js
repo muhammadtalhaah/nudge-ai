@@ -29,6 +29,23 @@
  * @property {Array<{ id: string, fullName: string, specialty: string }>} providers
  * @property {string} todayIsoDate Today's date in the business timezone, YYYY-MM-DD.
  * @property {string} timezone
+ * @property {string | null} userFirstName
+ *   What to call the person, or null when we have nothing usable to call them.
+ *
+ *   Their first name only, taken from the authenticated account and never from anything they
+ *   typed into the chat — an assistant that can be told who it is talking to is one that can be
+ *   told it is talking to somebody else. It goes no further than the prompt: no reply payload
+ *   carries it, and the only place it is persisted is inside whatever prose the assistant
+ *   wrote with it, which is the conversation the person is already reading.
+ * @property {boolean} isFirstReply
+ *   True when this session has no assistant turn yet, so the reply being written is the
+ *   opening one.
+ *
+ *   The greeting is a once-per-conversation event and this is the fact that makes it one. A
+ *   model cannot decide it for itself: history is trimmed to the last few turns, so the
+ *   twentieth message of a long conversation arrives looking exactly like the first. Derived
+ *   from what is stored rather than remembered in the process, so a reload, a second tab and a
+ *   restart all reach the same answer.
  * @property {string | null} lastReplyKind
  *   What the previous assistant turn resolved to, or null at the start of a conversation.
  *

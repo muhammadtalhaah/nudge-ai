@@ -80,6 +80,30 @@ export const toAppointmentSummary = (appointment) => ({
   status: appointment.status,
 });
 
+/**
+ * The name to greet somebody by, reduced to something that is safe to put in a prompt.
+ *
+ * First word only: "Hi Talha" is what a person says and "Hi Talha Khan" is what a mail merge
+ * says. Everything that is not part of a name is dropped rather than escaped, and the result is
+ * capped — `full_name` is whatever was typed into a signup form, so it reaches the model as
+ * untrusted text. It cannot reach anything: the model's output is an intent and some strings,
+ * and this only ever travels into that person's own prompt. But a name is one word, and a
+ * paragraph of instructions in the name field is not one, so it does not get to be.
+ *
+ * Null when nothing usable survives, which the prompt renders as "you do not know this
+ * person's name" rather than greeting a blank.
+ */
+const greetableFirstName = (fullName) => {
+  if (typeof fullName !== 'string') return null;
+
+  const firstWord = fullName.trim().split(/\s+/, 1)[0] ?? '';
+  // Letters, the marks that go with them, and the two punctuation marks that appear inside
+  // real names. Unicode-aware, because most of the world's names are not ASCII.
+  const cleaned = firstWord.replace(/[^\p{L}\p{M}'’-]/gu, '');
+
+  return cleaned ? cleaned.slice(0, 40) : null;
+};
+
 /** Today's date as the clinic sees it, which is what relative dates resolve against. */
 const businessToday = (timezone) =>
   new Intl.DateTimeFormat('en-CA', {
@@ -589,7 +613,25 @@ const actOnExtraction = async (caller, sessionId, extraction, context, timezone)
     return actOnAvailability(caller, extraction, context);
   }
 
-  if (intent === CHAT_INTENTS.GREETING || intent === CHAT_INTENTS.OTHER) {
+  /*
+   * Prose, and deliberately nothing else.
+   *
+   * `SYMPTOM` is here rather than in the booking branch below because that is the entire point
+   * of it: somebody who has said their head hurts has not asked for an appointment, and every
+   * other thing this function can return — a prefill, a form, a row of doctor cards — answers a
+   * request they have not made. Returning `MESSAGE` also keeps it out of `findBookingDraft`,
+   * which reads the kinds that settle booking facts; a conversation about a headache settles
+   * none, so the next turn starts from what was actually agreed rather than from a specialty
+   * the model guessed at while listening.
+   *
+   * The doctors arrive on the turn after this one, when the person says yes and the model
+   * returns `BOOK`. Nothing about that path changes.
+   */
+  if (
+    intent === CHAT_INTENTS.SYMPTOM ||
+    intent === CHAT_INTENTS.GREETING ||
+    intent === CHAT_INTENTS.OTHER
+  ) {
     return { kind: REPLY_KIND.MESSAGE, text: extraction.reply };
   }
 
@@ -802,6 +844,24 @@ export const handleMessage = async (caller, sessionId, content, hooks = {}) => {
     })),
     todayIsoDate: businessToday(business.timezone),
     timezone: business.timezone,
+    /**
+     * Who we are talking to, and whether we have said hello to them yet.
+     *
+     * The name comes off the verified caller, so the assistant cannot be told it is talking to
+     * somebody else by anyone typing into the chat. It goes into the prompt and no further —
+     * no reply payload carries it, and the only trace it leaves on disk is inside whatever
+     * sentence the assistant wrote with it, which is a message in the conversation the person
+     * is already reading.
+     *
+     * `isFirstReply` is read off `lastReplyKind` rather than tracked in a column of its own,
+     * and that is what makes the greeting happen exactly once: a session with no assistant turn
+     * has no last reply kind, and the moment this turn is stored it has one. Nothing is
+     * remembered between requests, so a reload, a second tab, a restart and a REST client all
+     * recompute the same answer from the same rows — and there is no flag that can be left set
+     * by a turn that failed halfway through.
+     */
+    userFirstName: greetableFirstName(caller.fullName),
+    isFirstReply: lastReplyKind === null,
     lastReplyKind,
     // The draft stores a provider id, because that is what survives a doctor being renamed.
     // The prompt needs a name, so it is resolved here against the live list — a doctor who

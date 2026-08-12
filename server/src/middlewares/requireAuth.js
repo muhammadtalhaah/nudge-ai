@@ -24,6 +24,10 @@ import { verifyAccessToken } from '../utils/tokens.js';
  * @property {string} businessId
  * @property {string} role One of USER_ROLES.
  * @property {string} email
+ * @property {string} fullName
+ *   The account holder's name, so the assistant can address them by it. Display only: it
+ *   authorises nothing, and it is read from the database row like everything else here rather
+ *   than from the token — a name the client asserts is not one we would want to say back.
  */
 
 const extractBearerToken = (header) => {
@@ -75,6 +79,7 @@ export const requireAuth = async (req, _res, next) => {
     businessId: user.businessId,
     role: user.role,
     email: user.email,
+    fullName: user.fullName,
   };
 
   next();
