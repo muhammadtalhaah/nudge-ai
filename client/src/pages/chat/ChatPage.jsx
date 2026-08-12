@@ -115,17 +115,40 @@ const ChatPage = () => {
   );
 
   const scrollRef = useRef(null);
-  const bottomRef = useRef(null);
 
-  // Follow the conversation as it grows. Also fires on the typing indicator and on each
-  // streamed fragment, so neither the "working" state nor the growing reply slips below the
-  // fold. 'auto' rather than 'smooth' while streaming: a smooth scroll re-triggered every few
-  // tokens never finishes, and the view lags behind the text.
+  /**
+   * Follow the conversation as it grows. Also fires on the typing indicator and on each
+   * streamed fragment, so neither the "working" state nor the growing reply slips below the
+   * fold. 'auto' rather than 'smooth' while streaming: a smooth scroll re-triggered every few
+   * tokens never finishes, and the view lags behind the text.
+   *
+   * This scrolls the pane itself rather than calling `scrollIntoView` on an anchor at the end
+   * of the thread. `scrollIntoView` is specified to scroll *every* scrollable ancestor up to
+   * the viewport, and the shell above this one is a clipped, fixed-height box — so whenever it
+   * had any scroll range at all, following the thread quietly scrolled the sidebar and header
+   * out of the window. Nothing offered a scrollbar to put them back, which is what made it look
+   * like the whole page had scrolled and stuck. Scrolling this element cannot move an ancestor.
+   */
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: streamingText ? 'auto' : 'smooth',
-      block: 'end',
-    });
+    const pane = scrollRef.current;
+    if (!pane) return;
+
+    const pin = (behavior) => pane.scrollTo({ top: pane.scrollHeight, behavior });
+
+    pin(streamingText ? 'auto' : 'smooth');
+
+    /**
+     * The turn that was just added is usually still growing when this effect runs: an assistant
+     * reply carries its structured part — slot chips, a confirmation, doctor cards — below the
+     * prose, and that lays out after the commit. A scroll aimed at the height measured now
+     * therefore stops short and leaves the newest turn under the composer. Re-pin as the pane
+     * settles, which also covers a late web font and a resized window.
+     */
+    const observer = new ResizeObserver(() => pin('auto'));
+    observer.observe(pane);
+    if (pane.firstElementChild) observer.observe(pane.firstElementChild);
+
+    return () => observer.disconnect();
   }, [messages, isAwaitingReply, streamingText]);
 
   const isOffline =
@@ -163,7 +186,7 @@ const ChatPage = () => {
             margin collapses and this behaves like an ordinary scroll container. */}
         <div
           ref={scrollRef}
-          className="flex flex-1 flex-col overflow-y-auto p-4"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4"
           role="log"
           aria-live="polite"
           aria-label="Conversation"
@@ -233,9 +256,6 @@ const ChatPage = () => {
               ) : null}
             </div>
           )}
-
-          {/* Scroll anchor. */}
-          <div ref={bottomRef} />
         </div>
 
         {/* A send failure appears above the composer, where the retry action is. */}
@@ -248,8 +268,9 @@ const ChatPage = () => {
         ) : null}
 
         {/* Held to the same column as the conversation above it, so the composer lines up with
-            the messages rather than spanning a width nothing else uses. */}
-        <div className="mx-auto w-full max-w-3xl mb-5">
+            the messages rather than spanning a width nothing else uses. `shrink-0` so a long
+            thread pushes against the scrolling pane above rather than squeezing the input. */}
+        <div className="mx-auto mb-5 w-full max-w-3xl shrink-0">
           <ChatComposer
             onSend={sendMessage}
             disabled={isBootstrapping}

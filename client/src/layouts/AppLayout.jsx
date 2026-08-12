@@ -40,7 +40,22 @@ const AppLayout = () => {
     // Fixed-height shell rather than min-height: it gives the chat pane a definite height to
     // fill, so it no longer needs to guess the chrome's size with a calc(). `main` owns the
     // scrolling, which keeps the sidebar and header fixed.
-    <div className="flex h-dvh overflow-hidden">
+    //
+    // `overflow-clip` rather than `overflow-hidden`: both clip identically, but `hidden` still
+    // creates a scroll container, and a scroll container with no scrollbar is one a script can
+    // move but a person cannot move back. Anything that scrolls an element into view — ours, a
+    // Radix focus guard, the browser's own focus handling — walks up to the nearest scrollable
+    // ancestor, and that used to be this box, taking the sidebar and header off-screen with it.
+    // `clip` is not scrollable at all, so the chrome is pinned by construction.
+    //
+    // `relative` is what makes that clipping total. An absolutely positioned descendant is laid
+    // out against its nearest *positioned* ancestor, and with none it uses the document itself —
+    // so it is not clipped by anything here and its box counts toward the page's height. The
+    // app is full of such elements: every `sr-only` label is `position: absolute`, and the chat
+    // thread grows one per turn. Deep in a scrolled conversation they sat hundreds of pixels
+    // below the fold, stretched the document past 100dvh, and gave the whole page a scrollbar
+    // that dragged the sidebar and header away. Positioning this box brings them back inside it.
+    <div className="relative flex h-dvh overflow-clip">
       {/* Permanent sidebar, tablet and up. */}
       <aside className="bg-sidebar hidden h-full w-64 shrink-0 border-r lg-tablet:block">
         <AppSidebar />

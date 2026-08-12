@@ -48,6 +48,11 @@ if (!window.IntersectionObserver) {
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
+// jsdom has no layout, so it ships no element-level scrolling either. The chat pane keeps
+// itself pinned to the newest turn with this, and would throw on render without it.
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = () => {};
+}
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false;
 }
