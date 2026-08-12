@@ -157,40 +157,9 @@ export const resolveTime = (text) => {
 /**
  * Combine a local date and time in a given IANA timezone into a UTC instant.
  *
- * Guess-and-correct: assume the wall clock is UTC, measure how far that lands from the
- * intended local time in the target zone, and adjust. Two passes converge even across a DST
- * transition, where the offset depends on the instant being measured.
- *
- * @param {string} isoDate YYYY-MM-DD
- * @param {string} clockTime HH:MM
- * @param {string} timeZone IANA zone name
- * @returns {Date | null} null when either input is not in the expected shape.
+ * Re-exported rather than implemented here. This module used to carry its own copy, and that
+ * copy compared only the hour — so it could settle on the right o'clock on the wrong calendar
+ * day, for times near midnight in zones far from UTC. The version in `shared/timezone.js`
+ * compares the whole local date-time and is the one both the server and the browser use.
  */
-export const zonedDateTimeToUtc = (isoDate, clockTime, timeZone) => {
-  const dateParts = isoDate.split('-').map(Number);
-  const timeParts = clockTime.split(':').map(Number);
-  if (dateParts.length !== 3 || timeParts.length !== 2) return null;
-
-  const [year, month, day] = dateParts;
-  const [hour, minute] = timeParts;
-
-  let guess = Date.UTC(year, month - 1, day, hour, minute, 0);
-
-  for (let pass = 0; pass < 2; pass += 1) {
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(new Date(guess));
-
-    const actualHour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
-    const actualMinute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-
-    const driftMinutes = actualHour * 60 + actualMinute - (hour * 60 + minute);
-    if (driftMinutes === 0) break;
-    guess -= driftMinutes * 60_000;
-  }
-
-  return new Date(guess);
-};
+export { zonedDateTimeToUtc } from '../../../shared/timezone.js';

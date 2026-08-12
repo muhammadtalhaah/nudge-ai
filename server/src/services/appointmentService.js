@@ -6,7 +6,8 @@
  * book anything a direct API call could not, and every rule below is enforced exactly once.
  */
 
-import { APPOINTMENT_STATUS, ERROR_CODES } from '../../../shared/constants.js';
+import { APPOINTMENT_STATUS, ERROR_CODES, TIME_OF_DAY_WINDOWS } from '../../../shared/constants.js';
+import { localHourDecimal, zonedWallClockToUtc } from '../../../shared/timezone.js';
 
 import { pool, withTransaction } from '../db/pool.js';
 import { BadRequestError, NotFoundError } from '../errors/AppError.js';
@@ -46,57 +47,6 @@ const asDomainError = async (operation) => {
     if (translated) throw translated;
     throw error;
   }
-};
-
-/**
- * The local wall-clock hour of an instant, in a given IANA timezone.
- *
- * Business hours are a human concept in the clinic's own timezone, while instants are
- * stored in UTC. `hourCycle: 'h23'` avoids the '24' that `hour12: false` can emit at
- * midnight in some implementations.
- */
-const localHourDecimal = (instant, timeZone) => {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(instant);
-
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
-  return hour + minute / 60;
-};
-
-/**
- * An instant's local wall clock in a timezone, re-encoded as if those numbers were UTC.
- *
- * Not a real instant, and not meant to be one — it is a comparable number. Subtracting it
- * from the UTC encoding of a wanted wall-clock time gives that zone's offset at that moment,
- * including the calendar day, which is the part an hour-only reading cannot see.
- */
-const localWallClockAsUtc = (instant, timeZone) => {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(instant);
-
-  const value = (type) => Number(parts.find((part) => part.type === type)?.value ?? '0');
-
-  return Date.UTC(
-    value('year'),
-    value('month') - 1,
-    value('day'),
-    value('hour'),
-    value('minute'),
-    value('second'),
-  );
 };
 
 /**
@@ -336,12 +286,23 @@ export const reschedule = async (caller, id, newStartsAt) => {
  * booked. Deliberately simple: this prototype has no per-provider working hours or
  * time-off, so availability is "open during business hours unless taken".
  *
+ * `timeOfDay` narrows the answer to part of the clinic's day. It is applied here rather than
+ * by the caller because the window is in clinic-local hours and this module is where the
+ * clinic's timezone is already known — filtering upstream would mean re-deriving it, and
+ * filtering in the browser would apply the reader's zone to the clinic's morning.
+ *
+ * `dayCount` is the unfiltered total, and it is what lets a caller tell "that morning is fully
+ * booked" apart from "that day is". Those deserve different sentences: one should offer the
+ * rest of the day, the other has to offer another day.
+ *
  * @param {Caller} caller
  * @param {string} providerId
  * @param {string} date YYYY-MM-DD in the business timezone.
- * @returns {Promise<{ providerId: string, date: string, slots: string[] }>}
+ * @param {string | null} [timeOfDay] One of TIME_OF_DAY, or null for the whole day.
+ * @returns {Promise<{ providerId: string, date: string, timezone: string,
+ *   timeOfDay: string | null, slots: string[], dayCount: number }>}
  */
-export const getAvailability = async (caller, providerId, date) => {
+export const getAvailability = async (caller, providerId, date, timeOfDay = null) => {
   const provider = await providerRepository.findById(pool, caller.businessId, providerId);
   if (!provider || !provider.isActive) throw new NotFoundError('Provider');
 
@@ -350,8 +311,8 @@ export const getAvailability = async (caller, providerId, date) => {
 
   // Interpret the requested date in the business's timezone by finding the UTC instant
   // whose local wall clock reads openHour on that date.
-  const dayStartUtc = zonedWallClockToUtc(date, business.openHour, business.timezone);
-  const dayEndUtc = zonedWallClockToUtc(date, business.closeHour, business.timezone);
+  const dayStartUtc = zonedWallClockToUtc(date, business.openHour, 0, business.timezone);
+  const dayEndUtc = zonedWallClockToUtc(date, business.closeHour, 0, business.timezone);
 
   const booked = await appointmentRepository.listBookedTimesForProvider(
     pool,
@@ -380,48 +341,26 @@ export const getAvailability = async (caller, providerId, date) => {
     if (!overlaps) slots.push(new Date(slotStart).toISOString());
   }
 
-  return { providerId, date, slots };
-};
+  const window = timeOfDay ? TIME_OF_DAY_WINDOWS[timeOfDay] : null;
 
-/**
- * Convert a wall-clock hour on a calendar date in a timezone into the corresponding UTC
- * instant.
- *
- * Works by guessing UTC, measuring how far the guess lands from the intended local time in
- * the target zone, and correcting. Two passes settle it even across a DST boundary, where
- * the offset itself depends on the instant.
- *
- * Both details below are corrections to an earlier version that compared only the hour:
- *
- * The whole local date-time is compared, not the hour alone. An hour-only comparison cannot
- * see which local *day* the guess landed on, so it happily settled on the right o'clock on the
- * wrong date — a day early in Americas zones for early opening hours, a day late in Asian
- * ones for late closing hours. Correct in UTC, which is why the fixtures never caught it.
- *
- * And hour 24 is normalised first. `close_hour` may be 24 — a clinic open until midnight —
- * but no timezone reports an hour of 24, so the correction measured a drift of -24 against it
- * and pushed the guess a full day forward on each pass. A midnight close came back three days
- * late, and every "free slot" after it belonged to another day.
- */
-const zonedWallClockToUtc = (isoDate, hour, timeZone) => {
-  const [year, month, day] = isoDate.split('-').map(Number);
+  // An unrecognised name is treated as no narrowing at all. The schema already restricts what
+  // can arrive here; this is the floor under that, and showing the whole day is the safe way
+  // to be wrong.
+  const narrowed = window
+    ? slots.filter((iso) => {
+        const hour = localHourDecimal(new Date(iso), business.timezone);
+        return hour >= window[0] && hour < window[1];
+      })
+    : slots;
 
-  // Midnight at the end of a day is midnight at the start of the next one — a real hour, on a
-  // real date, which is what the loop below needs.
-  const dayOffset = Math.floor(hour / 24);
-  const target = Date.UTC(year, (month ?? 1) - 1, (day ?? 1) + dayOffset, hour - dayOffset * 24);
-
-  let guess = target;
-
-  for (let pass = 0; pass < 2; pass += 1) {
-    // The guess's local wall clock, read back as though those numbers were UTC. Its distance
-    // from the target is exactly the zone offset to remove.
-    const driftMs = localWallClockAsUtc(new Date(guess), timeZone) - target;
-    if (Math.abs(driftMs) < 30_000) break;
-    guess -= driftMs;
-  }
-
-  return new Date(guess);
+  return {
+    providerId,
+    date,
+    timezone: business.timezone,
+    timeOfDay: window ? timeOfDay : null,
+    slots: narrowed,
+    dayCount: slots.length,
+  };
 };
 
 export default { book, list, getById, cancel, reschedule, getAvailability };

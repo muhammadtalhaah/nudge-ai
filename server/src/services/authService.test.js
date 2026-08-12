@@ -97,6 +97,67 @@ describe('signup', () => {
   });
 });
 
+/**
+ * The tenant travels with the session, and it exists for one field: `timezone`.
+ *
+ * Every time the UI draws — a free slot, an appointment card — is a UTC instant that has to be
+ * rendered in some zone, and for a clinic the only meaningful one is the clinic's. Without this on
+ * the auth payloads the browser had nothing but its own zone to fall back on, which is how a
+ * clinic's 09:00 came to be displayed as 14:00 under the word "morning".
+ *
+ * Asserted on all three entry points because the client sets its zone from whichever one it came
+ * in through, and a session restored by refresh is the commonest of them.
+ */
+describe('the clinic travels with the session', () => {
+  const expectClinic = (business) => {
+    expect(business).toMatchObject({
+      name: expect.any(String),
+      timezone: 'UTC',
+      openHour: expect.any(Number),
+      closeHour: expect.any(Number),
+    });
+  };
+
+  it('comes back from signup', async () => {
+    const { body } = await signup().expect(201);
+    expectClinic(body.data.business);
+  });
+
+  it('comes back from login', async () => {
+    await signup().expect(201);
+
+    const response = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'ada@example.com', password: 'correct horse battery' })
+      .expect(200);
+
+    expectClinic(response.body.data.business);
+  });
+
+  it('comes back from /auth/me', async () => {
+    const { body } = await signup().expect(201);
+
+    const response = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${body.data.accessToken}`)
+      .expect(200);
+
+    expectClinic(response.body.data.business);
+  });
+
+  /** The path a page reload takes, so the zone survives one. */
+  it('comes back from a refresh', async () => {
+    const first = await signup().expect(201);
+
+    const response = await request(app)
+      .post('/api/auth/refresh')
+      .set('Cookie', cookieHeader(refreshCookieFrom(first.headers)))
+      .expect(200);
+
+    expectClinic(response.body.data.business);
+  });
+});
+
 describe('login', () => {
   beforeEach(async () => {
     await signup().expect(201);

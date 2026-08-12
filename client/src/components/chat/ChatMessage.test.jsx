@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ChatMessage from './ChatMessage';
 import { renderWithProviders } from '@/test/renderWithProviders';
-import { formatDateTime } from '@/utils/formatDate';
+import { formatDateTime, formatTime } from '@/utils/formatDate';
 
 const listProviders = vi.fn();
 const getAvailability = vi.fn();
@@ -187,6 +187,90 @@ describe('the fallback booking form', () => {
   });
 });
 
+/**
+ * The reply to "what is free on Tuesday morning?".
+ *
+ * `slotTimezone` is the clinic's and is carried on the payload, which is what makes these times
+ * mean the same thing to every reader. The clinic here keeps its hours in UTC, so 09:00Z is a
+ * 09:00 appointment — and a reader in Karachi must still be shown 09:00, not their own 14:00.
+ */
+const slotListTurn = {
+  id: 'assistant-3',
+  role: 'assistant',
+  content: "Here are Dr. Samuel Okafor's free times on the morning of Tuesday 18 August.",
+  createdAt: '',
+  reply: {
+    kind: 'slot_list',
+    text: "Here are Dr. Samuel Okafor's free times on the morning of Tuesday 18 August.",
+    slots: ['2026-08-18T09:00:00.000Z', '2026-08-18T09:30:00.000Z', '2026-08-18T10:00:00.000Z'],
+    slotDate: '2026-08-18',
+    slotTimezone: 'UTC',
+    slotWindow: 'morning',
+    providers: [PROVIDER],
+    prefill: { providerId: PROVIDER.id },
+    missing: ['time'],
+  },
+};
+
+describe('the free-times list', () => {
+  /*
+   * The reported bug, as an assertion on the prose.
+   *
+   * "Let me check Dr Samuel Okafor's availability for next Tuesday morning" was narrating an
+   * errand while the answer to it was already rendered underneath. The sentence has to present
+   * the list, and it has to name the day it resolved "next Tuesday" to — that is what lets someone
+   * catch it resolving to the wrong one.
+   */
+  it('presents the answer instead of announcing a lookup', () => {
+    renderTurn({ message: slotListTurn, isBookingResolved: false });
+
+    const text = screen.getByText(/free times/i).textContent;
+    expect(text).not.toMatch(/let me check|i(?:'| wi)ll check|checking/i);
+    expect(text).toMatch(/Tuesday 18 August/);
+    expect(text).toMatch(/Dr\. Samuel Okafor/);
+  });
+
+  it('renders the times in the clinic’s zone, and says which one that is', () => {
+    renderTurn({ message: slotListTurn, isBookingResolved: false });
+
+    /*
+     * Asserted through the app's own formatter rather than as literals, so the suite is not
+     * claiming anything about the locale of the machine it runs on. What it does claim is the
+     * zone: these are the clinic's 09:00, 09:30 and 10:00, and a reader east of the clinic must
+     * not be shown their own afternoon instead.
+     */
+    for (const slot of slotListTurn.reply.slots) {
+      expect(screen.getByText(formatTime(slot, 'UTC'))).toBeInTheDocument();
+    }
+
+    // Named, so a reader whose own clock disagrees finds out here and not at the appointment.
+    expect(screen.getByText(/clinic time \(UTC\)/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Proves the zone comes off the payload rather than from the runtime.
+   *
+   * Without this, a suite that happens to run in the same zone as its fixture passes whether the
+   * code reads `slotTimezone` or silently ignores it. Rendering the same instants against a
+   * different clinic is what tells those two apart.
+   */
+  it('reads the zone off the reply, not the machine it renders on', () => {
+    const tokyoTurn = {
+      ...slotListTurn,
+      reply: { ...slotListTurn.reply, slotTimezone: 'Asia/Tokyo' },
+    };
+
+    renderTurn({ message: tokyoTurn, isBookingResolved: false });
+
+    for (const slot of tokyoTurn.reply.slots) {
+      expect(screen.getByText(formatTime(slot, 'Asia/Tokyo'))).toBeInTheDocument();
+      expect(screen.queryByText(formatTime(slot, 'UTC'))).not.toBeInTheDocument();
+    }
+
+    expect(screen.getByText(/clinic time \(GMT\+9\)/i)).toBeInTheDocument();
+  });
+});
+
 describe('the booking confirmation', () => {
   it('names the provider, the specialty, the status and a time in local terms', () => {
     renderTurn({ message: bookedTurn, isBookingResolved: false });
@@ -196,13 +280,15 @@ describe('the booking confirmation', () => {
     expect(screen.getByText('Confirmed')).toBeInTheDocument();
 
     /*
-     * The time is asserted through the app's own formatter rather than as a literal. That is
-     * the claim being made: the confirmation shows the instant rendered in the *viewer's*
-     * timezone and locale. A hardcoded string would only be asserting where the suite runs —
-     * and the server, which knows the clinic's timezone and not the viewer's, deliberately
-     * names no time in the prose above.
+     * The time is asserted through the app's own formatter rather than as a literal, because a
+     * hardcoded string would only be asserting where the suite runs.
+     *
+     * This turn is rendered with no auth context, so there is no clinic zone to be had and the
+     * formatter falls back to the viewer's — the documented degradation, asserted here so it stays
+     * a fallback rather than becoming the behaviour again. The clinic-zone path is covered by the
+     * free-times list above, which carries its zone on the reply itself.
      */
     const startsAt = bookedTurn.reply.appointment.startsAt;
-    expect(screen.getByText(`${formatDateTime(startsAt)} · Dermatology`)).toBeInTheDocument();
+    expect(screen.getByText(`${formatDateTime(startsAt, null)} · Dermatology`)).toBeInTheDocument();
   });
 });

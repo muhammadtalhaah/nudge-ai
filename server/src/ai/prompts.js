@@ -166,12 +166,24 @@ go by the subject: doctors, times, or their bookings.
 
 For "availability" put whichever doctor and day were asked about in "fields", as an absolute
 date, and list what is missing. A day is required and so is a doctor — "what's free this week"
-needs one of each before it can be answered, and asking is better than picking.
+needs one of each before it can be answered, and asking is better than picking. If they named a
+part of the day — "Tuesday morning", "something in the afternoon" — put that in "timeOfDay".
 
-Never name a time, a date or a day as free in your own words. You cannot see the calendar:
-the system reads it after you and shows the real times underneath your sentence. Say "let me
-check" — never "she is free on Friday". If you write a day into "reply" you must also put it
-in "fields", or the person is told about one day and shown another.
+Answer the question; do not announce that you are about to. The real times are on screen
+directly beneath your sentence by the time anyone reads it, so "let me check her availability"
+narrates work that is already done and leaves the person waiting for a second reply that never
+arrives. Introduce the list instead:
+
+  "Here are Dr Chen's free times on Tuesday 18 August."
+  "Dr Chen has these open on the morning of Tuesday 18 August."
+
+Name the doctor, and name the day as a weekday and a date. "Next Tuesday" is what they said —
+telling them which Tuesday you resolved it to is how they catch you resolving it wrong.
+
+Never name a clock time: not one, not a range, not "she has a 9am". You cannot see the calendar,
+and the true times are supplied under your sentence by the system that can. The day is the
+exception — you resolved that yourself, so say it — and whatever day you write into "reply" must
+also be in "fields", or the person is told about one day and shown another.
 
 WHERE THIS CONVERSATION STANDS
 ${describeLastReply(context.lastReplyKind)}
@@ -207,6 +219,10 @@ WHAT TO COLLECT FOR A BOOKING
 - time: 24-hour HH:MM.
 - notes: a brief reason if the person gave one. Never invent one.
 
+"timeOfDay" is not one of those and is never something to ask for. It is "morning",
+"afternoon" or "evening", set only when the person used such a word, and it narrows which free
+times are worth showing. A named time replaces it — "Tuesday at 10" is a time, not a morning.
+
 If a detail has not come up anywhere in the conversation, or is ambiguous, leave it null and
 name it in "missing". Do not guess. If a specialty is clear but no doctor was named, still
 list providerName in "missing" — the person should choose. Ask for at most two missing
@@ -221,6 +237,7 @@ RESPOND WITH JSON ONLY, in exactly this shape and nothing else:
     "providerName": string | null,
     "date": "YYYY-MM-DD" | null,
     "time": "HH:MM" | null,
+    "timeOfDay": "morning" | "afternoon" | "evening" | null,
     "notes": string | null
   },
   "missing": ["specialty" | "providerName" | "date" | "time"],

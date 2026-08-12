@@ -18,26 +18,26 @@ export const signup = async (req, res) => {
   // Shaped by signupSchema in the validate middleware, so the fields below are known good.
   const input = req.body;
 
-  const { user, accessToken, refreshToken } = await authService.signup(
+  const { user, business, accessToken, refreshToken } = await authService.signup(
     { fullName: input.fullName, email: input.email, password: input.password, phone: input.phone },
     userAgentOf(req),
   );
 
   setRefreshCookie(res, refreshToken);
-  sendData(res, { user, accessToken }, 201);
+  sendData(res, { user, business, accessToken }, 201);
 };
 
 export const login = async (req, res) => {
   const input = req.body;
 
-  const { user, accessToken, refreshToken } = await authService.login(
+  const { user, business, accessToken, refreshToken } = await authService.login(
     input.email,
     input.password,
     userAgentOf(req),
   );
 
   setRefreshCookie(res, refreshToken);
-  sendData(res, { user, accessToken });
+  sendData(res, { user, business, accessToken });
 };
 
 /**
@@ -51,12 +51,12 @@ export const refresh = async (req, res) => {
   }
 
   try {
-    const { user, accessToken, refreshToken } = await authService.refresh(
+    const { user, business, accessToken, refreshToken } = await authService.refresh(
       presented,
       userAgentOf(req),
     );
     setRefreshCookie(res, refreshToken);
-    sendData(res, { user, accessToken });
+    sendData(res, { user, business, accessToken });
   } catch (error) {
     // The cookie is dead either way — clear it so the browser stops resending a token that
     // will only fail again.
@@ -78,8 +78,8 @@ export const logoutAll = async (req, res) => {
 };
 
 export const me = async (req, res) => {
-  const user = await authService.getById(req.auth.userId);
-  sendData(res, { user });
+  const { user, business } = await authService.getById(req.auth.userId);
+  sendData(res, { user, business });
 };
 
 export default { signup, login, refresh, logout, logoutAll, me };

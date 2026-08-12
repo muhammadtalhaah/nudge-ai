@@ -146,6 +146,7 @@ export const availability = async (req, res) => {
     callerFrom(req),
     queryParams.providerId,
     queryParams.date,
+    queryParams.timeOfDay ?? null,
   );
   sendData(res, result);
 };

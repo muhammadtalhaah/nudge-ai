@@ -78,6 +78,40 @@ export const CHAT_INTENT_VALUES = Object.values(CHAT_INTENTS);
 export const BOOKING_FIELDS = ['specialty', 'providerName', 'date', 'time'];
 
 /**
+ * A part of the day, as people ask for it: "Tuesday morning", "some time this afternoon".
+ *
+ * Deliberately not a booking field. It never becomes an appointment — an appointment has an
+ * exact `time` — it only narrows which free slots are worth showing. Treating it as a fifth
+ * thing to collect would have the assistant asking "morning or afternoon?" before it could
+ * book, when the person had already named 10:00.
+ */
+export const TIME_OF_DAY = {
+  MORNING: 'morning',
+  AFTERNOON: 'afternoon',
+  EVENING: 'evening',
+};
+
+export const TIME_OF_DAY_VALUES = Object.values(TIME_OF_DAY);
+
+/**
+ * Which clinic-local hours each one covers, as `[fromHour, untilHour)`.
+ *
+ * In the clinic's timezone, not the viewer's, and that is the whole point: "Tuesday morning"
+ * means the morning of the clinic's Tuesday. Someone five hours ahead asking for a morning
+ * appointment is not asking for the clinic's 04:00 — and if these windows were applied in the
+ * reader's zone, that is exactly what they would get.
+ *
+ * The boundaries are the conventional ones rather than anything derived from business hours:
+ * they only have to agree with what a person means, and a clinic that opens at 09:00 has no
+ * morning slots before it regardless.
+ */
+export const TIME_OF_DAY_WINDOWS = {
+  [TIME_OF_DAY.MORNING]: [0, 12],
+  [TIME_OF_DAY.AFTERNOON]: [12, 17],
+  [TIME_OF_DAY.EVENING]: [17, 24],
+};
+
+/**
  * What a chat turn resolved to.
  *
  * `NEEDS_DETAIL` and `FORM_FALLBACK` are both "the booking is not complete yet", and the

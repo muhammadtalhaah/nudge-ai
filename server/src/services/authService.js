@@ -30,6 +30,8 @@ import {
  *
  * @typedef {object} AuthResult
  * @property {PublicUser} user
+ * @property {PublicBusiness | null} business The tenant, so the client can render times in the
+ *   clinic's zone from first paint.
  * @property {string} accessToken
  * @property {string} refreshToken
  */
@@ -61,6 +63,35 @@ export const toPublicUser = (user) => ({
   role: user.role,
   businessId: user.businessId,
   createdAt: user.createdAt,
+});
+
+/**
+ * The tenant, as much of it as the client needs.
+ *
+ * `timezone` is the field with consequences. Every time the UI shows is an instant that has to
+ * be read in *some* zone, and for a clinic the only one that means anything is the clinic's: a
+ * free slot is a time to physically be somewhere. Rendering it in the reader's zone turns the
+ * clinic's 09:00 into somebody's afternoon, which is how "Tuesday morning" ends up displayed as
+ * a list starting at 14:00.
+ *
+ * It rides on the auth payloads because it is session-constant tenant configuration, and
+ * because the router already waits for auth to settle before rendering — so every screen has it
+ * on first paint, with no second request and no loading state of its own. The hours come along
+ * for the same reason and cost nothing extra.
+ *
+ * @typedef {object} PublicBusiness
+ * @property {string} id
+ * @property {string} name
+ * @property {string} timezone IANA zone the clinic keeps its hours in.
+ * @property {number} openHour
+ * @property {number} closeHour
+ */
+export const toPublicBusiness = (business) => ({
+  id: business.id,
+  name: business.name,
+  timezone: business.timezone,
+  openHour: business.openHour,
+  closeHour: business.closeHour,
 });
 
 /**
@@ -131,7 +162,7 @@ export const signup = async (input, userAgent) => {
     const tokens = await issueTokens(tx, user, userAgent);
     authLogger.info({ userId: user.id, businessId: business.id }, 'user signed up');
 
-    return { user: toPublicUser(user), ...tokens };
+    return { user: toPublicUser(user), business: toPublicBusiness(business), ...tokens };
   });
 };
 
@@ -165,7 +196,7 @@ export const login = async (email, password, userAgent) => {
     const tokens = await issueTokens(tx, user, userAgent);
     await userRepository.touchLastLogin(tx, user.id);
     authLogger.info({ userId: user.id }, 'user logged in');
-    return { user: toPublicUser(user), ...tokens };
+    return { user: toPublicUser(user), business: toPublicBusiness(business), ...tokens };
   });
 };
 
@@ -214,7 +245,18 @@ export const refresh = async (rawToken, userAgent) => {
       }
 
       const tokens = await issueTokens(tx, user, userAgent);
-      return { user: toPublicUser(user), ...tokens };
+      // Read by id rather than by the configured slug: this is a session being restored, and it
+      // belongs to whichever tenant the user is actually in.
+      const business = await businessRepository.findById(tx, user.businessId);
+
+      return {
+        user: toPublicUser(user),
+        // A tenant row that has gone missing under a live session is not worth failing a
+        // refresh over. The client falls back to the viewer's zone, which is the behaviour it
+        // had before this field existed.
+        business: business ? toPublicBusiness(business) : null,
+        ...tokens,
+      };
     });
   } catch (error) {
     if (error instanceof ConcurrentRotationError) {
@@ -264,11 +306,34 @@ export const logoutAll = async (userId) =>
     return revoked;
   });
 
-/** @returns {Promise<PublicUser>} */
+/**
+ * The signed-in user and the tenant they belong to.
+ *
+ * Both, because this is what `/auth/me` answers and the client needs the clinic's timezone to
+ * render a single time correctly — fetching it separately would mean a second request on every
+ * load, gating the same screens.
+ *
+ * @returns {Promise<{ user: PublicUser, business: PublicBusiness | null }>}
+ */
 export const getById = async (userId) => {
   const user = await userRepository.findById(pool, userId);
   if (!user) throw new NotFoundError('User');
-  return toPublicUser(user);
+
+  const business = await businessRepository.findById(pool, user.businessId);
+
+  return {
+    user: toPublicUser(user),
+    business: business ? toPublicBusiness(business) : null,
+  };
 };
 
-export default { signup, login, refresh, logout, logoutAll, getById, toPublicUser };
+export default {
+  signup,
+  login,
+  refresh,
+  logout,
+  logoutAll,
+  getById,
+  toPublicUser,
+  toPublicBusiness,
+};

@@ -520,6 +520,218 @@ describe('listing doctors, appointments and free times', () => {
 });
 
 /**
+ * Answering an availability question, in the words it is answered with.
+ *
+ * The reported bug was not a wrong list — it was a right list under the wrong sentence. Asked for
+ * "next Tuesday morning", the assistant replied "Let me check Dr Samuel Okafor's availability for
+ * next Tuesday morning" and rendered the times immediately below it: narrating an errand that was
+ * already finished, naming no date, and listing the whole day rather than the morning.
+ *
+ * The prose for these turns is therefore written by the server, not forwarded from the model —
+ * only the server knows which doctor resolved, which day was queried, and what came back. Each
+ * test below sets the model's own reply to something the old code would have shown verbatim, so a
+ * regression would surface as that text reappearing.
+ */
+describe('how free times are announced', () => {
+  /** The clinic day as the server writes it: "Tuesday 18 August". */
+  const dayLabel = (isoDate) =>
+    new Intl.DateTimeFormat('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'UTC',
+    }).format(new Date(`${isoDate}T12:00:00Z`));
+
+  const availabilityTurn = (date, timeOfDay = null) =>
+    extraction({
+      intent: 'availability',
+      fields: {
+        specialty: null,
+        providerName: tenant.providerName,
+        date,
+        time: null,
+        timeOfDay,
+        notes: null,
+      },
+      // Exactly what the prompt used to ask for, and what the screenshot showed. If this string
+      // reaches the user again, these tests have stopped protecting anything.
+      reply: `Let me check ${tenant.providerName}'s availability for that day.`,
+    });
+
+  it('presents the times instead of announcing a lookup, and names the day', async () => {
+    const date = tomorrow();
+    setProviderForTesting(fakeProvider(availabilityTurn(date)));
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'i need to see a dermatologist next tuesday',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('slot_list');
+
+    // The bug, stated as an assertion.
+    expect(reply.text).not.toMatch(/let me check|i'll check|checking/i);
+
+    // The absolute date, which is how someone catches "next Tuesday" resolved to the wrong one.
+    expect(reply.text).toContain(dayLabel(date));
+    expect(reply.text).toContain(tenant.providerName);
+    expect(reply.slotDate).toBe(date);
+  });
+
+  it('carries the clinic’s zone, so the times are not redrawn as the reader’s', async () => {
+    setProviderForTesting(fakeProvider(availabilityTurn(tomorrow())));
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what is free tomorrow?',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    // The fixture clinic keeps its hours in UTC. Without this on the payload the client renders
+    // the viewer's zone, and a clinic morning is displayed as somebody's afternoon.
+    expect(reply.slotTimezone).toBe('UTC');
+  });
+
+  it('narrows to the part of the day that was asked for', async () => {
+    const date = tomorrow();
+    setProviderForTesting(fakeProvider(availabilityTurn(date, 'morning')));
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'i need to see a dermatologist next tuesday morning',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('slot_list');
+    expect(reply.slotWindow).toBe('morning');
+    expect(reply.text).toMatch(/morning/i);
+    expect(reply.text).toContain(dayLabel(date));
+
+    // Every slot is genuinely before noon *at the clinic*, which is the only reading of "morning"
+    // that means anything. The fixture opens at 00:00 and closes at 24:00, so the unnarrowed day
+    // would have run well past this.
+    expect(reply.slots.length).toBeGreaterThan(0);
+    for (const slot of reply.slots) {
+      expect(new Date(slot).getUTCHours(), slot).toBeLessThan(12);
+    }
+    expect(reply.slots).toContain(`${date}T11:30:00.000Z`);
+    expect(reply.slots).not.toContain(`${date}T12:00:00.000Z`);
+  });
+
+  /**
+   * "Nothing that morning" and stopping there makes someone ask a second question to find out
+   * what this turn already knows. The alternative they need in order to decide is one query away,
+   * so it is shown — and the label has to drop to the whole day along with the list, or the
+   * sentence says morning over a list of afternoons all over again.
+   */
+  it('offers the rest of the day when the part asked for is full', async () => {
+    // An afternoon-only clinic: asking for the morning cannot be satisfied, but the day is open.
+    await pool.query('UPDATE businesses SET open_hour = 13, close_hour = 17 WHERE id = $1', [
+      tenant.businessId,
+    ]);
+
+    const date = tomorrow();
+    setProviderForTesting(fakeProvider(availabilityTurn(date, 'morning')));
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'anything tuesday morning?',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('slot_list');
+    expect(reply.text).toMatch(/nothing free on the morning/i);
+    expect(reply.text).toMatch(/later that day/i);
+
+    // Widened, so the narrowing is off the payload too.
+    expect(reply.slotWindow).toBeNull();
+    expect(reply.slots.length).toBeGreaterThan(0);
+    for (const slot of reply.slots) {
+      expect(new Date(slot).getUTCHours(), slot).toBeGreaterThanOrEqual(13);
+    }
+  });
+
+  /**
+   * The two branches that ask a question rather than answer one.
+   *
+   * Both used to prefix the model's sentence. Now that the model is asked to write a
+   * presentational lead-in, prefixing it produced "Here are the free times on Tuesday 18 August.
+   * Which doctor did you have in mind?" — so these are server-authored too.
+   */
+  it('asks its own question when the doctor is unknown, without the lead-in', async () => {
+    const date = tomorrow();
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: null,
+            date,
+            time: null,
+            timeOfDay: null,
+            notes: null,
+          },
+          reply: `Here are the free times on ${dayLabel(date)}.`,
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      'what slots are there on tuesday?',
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('needs_detail');
+    expect(reply.missing).toEqual(['providerName']);
+    expect(reply.text).toMatch(/which doctor/i);
+    // The model's lead-in is gone rather than stitched in front of the question.
+    expect(reply.text).not.toMatch(/here are the free times/i);
+    // The day it did understand is still named, so nobody has to repeat it.
+    expect(reply.text).toContain(dayLabel(date));
+  });
+
+  it('asks which day when only a doctor was named', async () => {
+    setProviderForTesting(
+      fakeProvider(
+        extraction({
+          intent: 'availability',
+          fields: {
+            specialty: null,
+            providerName: tenant.providerName,
+            date: null,
+            time: null,
+            timeOfDay: null,
+            notes: null,
+          },
+          reply: 'Here are their free times.',
+        }),
+      ),
+    );
+
+    const response = await say(
+      accessToken,
+      await newSession(accessToken),
+      `when is ${tenant.providerName} free?`,
+    ).expect(201);
+    const { reply } = response.body.data;
+
+    expect(reply.kind).toBe('needs_detail');
+    expect(reply.missing).toEqual(['date']);
+    expect(reply.text).toMatch(/which day/i);
+    expect(reply.text).toContain(tenant.providerName);
+    expect(reply.text).not.toMatch(/here are their free times/i);
+  });
+});
+
+/**
  * The conversation is the unit of work, not the message.
  *
  * A model reads a turn at a time and will drop a detail it was told two turns ago, so what
