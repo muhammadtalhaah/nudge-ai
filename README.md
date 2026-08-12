@@ -1,8 +1,9 @@
 # Nudge AI — AI-assisted appointment booking
 
-A working prototype of a SaaS appointment-booking app. You describe what you need in plain
-language, an LLM extracts the booking details, and the system books it — falling back to a
-prefilled form whenever the model cannot get all the way there.
+A working prototype of a SaaS appointment-booking app. You say what is going on in plain
+language; the assistant talks it through before it reaches for a calendar, and once seeing
+someone is worth your time it gathers the details and books it — falling back to a prefilled
+form whenever the model cannot get all the way there.
 
 Built as a technical assessment. The emphasis is on architecture, service boundaries, and
 defensible decisions rather than feature count.
@@ -82,14 +83,17 @@ run from the repo root.
 │              only            transactions   row mapping         │
 │                                                                 │
 │   ai/  provider boundary: mistral | offline stub                │
+│        one JSON extraction a turn — the model classifies and    │
+│        writes prose; every record it acts on is fetched here    │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
 │  PostgreSQL       8 tables. The exclusion constraint on         │
-│                   appointments is the authority on availability. │
+│                   appointments is the authority on availability │
 └─────────────────────────────────────────────────────────────────┘
 
-shared/   Zod schemas + domain constants, imported by BOTH sides
+shared/   Zod schemas + domain constants (the chat intents among
+          them), imported by BOTH sides
 ```
 
 Full detail in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
@@ -133,6 +137,7 @@ user message
     ├─ Zod validation  ──►  fails?  ──►  FORM FALLBACK
     │
     ├─ intent?
+    │    symptom      → prose and nothing else — talk it through before booking anything
     │    list         → the caller's own appointments
     │    providers    → the clinic's doctors, as cards from real rows
     │    availability → free slots, computed from business hours minus real bookings
@@ -157,11 +162,31 @@ The model classifies; the server decides what that means and fetches it, so the 
 real rows and the free times come from the calendar rather than from a sentence the model
 composed. It is told, in as many words, never to claim a time is free.
 
+**A symptom is not a booking request.** "I have a headache" is somebody telling you something,
+and answering it with a booking form is answering a question they have not asked. `symptom` is
+the intent for the part of the conversation that comes first: acknowledge it, ask what actually
+bears on whether a doctor is worth their time, offer the general information anyone could give,
+say whether seeing someone is warranted and why — then offer to find them one. It resolves to
+prose and nothing else: no prefill, no cards, no form, and no booking draft left behind, so the
+specialty the model settled on while listening cannot quietly become an appointment. The turn
+where the person says yes is `book`, and everything from there is the flow above, unchanged.
+The prompt still forbids a diagnosis, a prognosis, a medication or a reading of any test result,
+and it routes the emergency-shaped complaints to emergency care rather than to a calendar.
+
+**It says hello once.** The assistant is given the signed-in person's first name and told, in
+the prompt, whether the reply it is writing is the opening one — so "Hi Talha! How can I help
+you today?" happens on the first turn and the name is not used again. Both halves are server
+facts: the name comes off the verified session and never off anything typed into the chat, and
+"have we said hello" is derived from whether the conversation has an assistant turn in it. That
+derivation is what makes it survive a reload, a second tab and a restart without a flag to get
+out of step. The name reaches the prompt and nothing else — no reply payload carries it.
+
 **The fallback is the feature.** When extraction is incomplete or ambiguous, the reply carries
 a `form_fallback` payload with whatever _was_ understood, and the client renders the booking
-form prefilled with those values and the missing fields marked. Say "I have an itchy rash" and
-you get a form with Dermatology and Dr. Okafor already chosen, and Date/Time flagged as still
-needed. The user finishes in two clicks instead of retyping.
+form prefilled with those values and the missing fields marked. Ask to book with a doctor whose
+name matches nobody and you get the form carrying the specialty and the day you did give, with
+the real doctors to choose between — rather than the same question asked back at you. The user
+finishes in two clicks instead of retyping.
 
 **The conversation is the unit of work, not the message.** A model reads one turn at a time
 and will happily drop a detail it was told two turns ago, so the booking under discussion is
@@ -193,18 +218,19 @@ conversation rather than once per message. Truncating the first message produced
 rows reading "I have an itchy rash on my…"; it survives only as the fallback for when the call
 fails or the provider cannot summarise at all.
 
-**Guardrails**, all tested:
+**Guardrails**, all tested except the one marked otherwise:
 
-| Risk                                        | Mitigation                                                                                                      |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Malformed / hallucinated JSON               | Parsed through `aiExtractionSchema`; failure degrades to the form                                               |
-| Invented doctor                             | Resolved against real rows; no match → form fallback                                                            |
-| Provider outage or timeout                  | Caught, logged, degrades to the form — never a 500                                                              |
-| Prompt injection                            | Model output grants no authority; identity comes from the JWT, mutations re-validated server-side               |
-| Destructive action from a model instruction | "Cancel everything" only ever _lists_ appointments; cancelling requires a deliberate click on a specific record |
-| Cross-tenant / cross-user access            | Every query scoped by `business_id` and `user_id` from the token                                                |
-| Medical advice                              | System prompt refuses diagnosis and redirects to scheduling                                                     |
-| Cost / abuse                                | Per-user rate limit on both REST and socket paths                                                               |
+| Risk                                        | Mitigation                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Malformed / hallucinated JSON               | Parsed through `aiExtractionSchema`; failure degrades to the form                                                                                                                                                                                                                                                                                                       |
+| Invented doctor                             | Resolved against real rows; no match → form fallback                                                                                                                                                                                                                                                                                                                    |
+| Provider outage or timeout                  | Caught, logged, degrades to the form — never a 500                                                                                                                                                                                                                                                                                                                      |
+| Prompt injection                            | Model output grants no authority; identity comes from the JWT, mutations re-validated server-side                                                                                                                                                                                                                                                                       |
+| Destructive action from a model instruction | "Cancel everything" only ever _lists_ appointments; cancelling requires a deliberate click on a specific record                                                                                                                                                                                                                                                         |
+| Cross-tenant / cross-user access            | Every query scoped by `business_id` and `user_id` from the token                                                                                                                                                                                                                                                                                                        |
+| Clinical overreach                          | _Prompt-enforced, not asserted._ Only the general information anyone could give is allowed; diagnosis, prognosis, medication and any reading of a result are refused, and the emergency-shaped complaints are named and routed to emergency care. A line about language has nothing in the code to enforce it against, and a stub provider cannot be made to violate it |
+| Impersonating the user                      | The name the assistant greets you by comes off the verified session, never off anything typed into the chat, and reaches the prompt reduced to one word of letters                                                                                                                                                                                                      |
+| Cost / abuse                                | Per-user rate limit on both REST and socket paths                                                                                                                                                                                                                                                                                                                       |
 
 **Structured UI payloads are server-derived, never model-authored.** Doctor cards, slot lists
 and confirmations are built from database records. A hallucinated appointment cannot be
@@ -427,7 +453,10 @@ Deliberate scope choices, not oversights.
 - **The offline assistant is a keyword matcher.** It handles the demo paths well and is
   honest about what it is (the UI marks replies as degraded), but multi-turn state tracking is
   where it is weakest — it resolves the newest statement about each field and falls back to
-  recent turns, which is a heuristic, not comprehension.
+  recent turns, which is a heuristic, not comprehension. The conversational path is where that
+  shows most: it recognises a symptom, declines to advise, and offers to find a doctor, and the
+  "yes" that follows books normally — but the follow-up questions and the judgement about
+  whether a doctor is warranted need a model, and it does not fake them.
 - **`npm audit` reports two advisories with no available fix**: a React Router RSC-mode CSRF
   issue (this is a plain SPA with no RSC and no server actions, so the affected code path does
   not exist here) and an esbuild dev-server issue that is Windows-only and dev-only. Both are
@@ -444,8 +473,8 @@ Deliberate scope choices, not oversights.
 
 ```bash
 npm test                       # everything — server first, then client
-npm test --workspace server    # 144 tests, integration ones against real Postgres
-npm test --workspace client    # 47 component/unit tests in jsdom — needs no database
+npm test --workspace server    # 180 tests, integration ones against real Postgres
+npm test --workspace client    # 81 component/unit tests in jsdom — needs no database
 ```
 
 Server tests use a separate `nudge_ai_test` database (auto-derived from `DATABASE_URL`, with a
@@ -460,7 +489,11 @@ The tests worth reading:
   matrix.
 - **`chatService.test.js`** — every way a model can misbehave (prose instead of JSON,
   truncated JSON, invented intent, invented doctor, another tenant's doctor, outage, timeout)
-  and the assertion that each degrades to the form with nothing booked.
+  and the assertion that each degrades to the form with nothing booked. Also the two halves of
+  the conversational path: that a symptom produces prose and leaves no booking draft behind,
+  that accepting the offer reaches the ordinary booking flow, and that the greeting instruction
+  appears in the prompt on the opening turn and is replaced by its negative on every turn after
+  — including when the conversation is reopened, since that is what the derivation is for.
 - **`authService.test.js`** — refresh rotation, replay revoking the family, and five
   concurrent refreshes yielding exactly one winner. The replay test is a regression test for a
   real bug: the family revocation originally ran inside the transaction that then threw, so the

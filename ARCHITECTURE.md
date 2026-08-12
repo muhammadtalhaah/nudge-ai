@@ -156,6 +156,51 @@ about Friday?", Mistral names Friday in its prose and leaves the field null, and
 Thursday there would show real times for a day nobody asked about, under a sentence naming
 another one. Asking which day costs a turn; the alternative is confidently wrong.
 
+### A symptom is not a booking request
+
+`symptom` is a separate intent for the same reason the three list-shaped ones are: it is a
+different question wearing a familiar shape. It was folded into `book` once, and the result was
+that "I have a headache" produced a booking form — the assistant reduced to the form it was
+supposed to replace, asking which day someone wanted before establishing whether they needed a
+day at all.
+
+It is the one intent that carries nothing. The reply is `message`: no prefill, no doctor cards,
+no form. That is not a simplification, it is the mechanism — `findBookingDraft` reads the kinds
+that settle booking facts, so a turn spent talking about a headache leaves no draft, and the
+specialty the model arrived at while listening cannot become an appointment that nobody agreed
+to. The specialty is not lost by withholding it: what carries the conversation is the person's
+own words in the history, re-read on the turn that actually books.
+
+The clinical line is drawn in the prompt rather than in code, because it is a line about
+language and there is nothing here to enforce it against — the model's output is prose plus an
+intent, and no branch below acts on the prose. What the prompt permits is the general
+information anybody could give and an opinion on whether a doctor is warranted; what it refuses
+is a diagnosis, a prognosis, a medication, and any reading of a result, scan or photograph. The
+emergency-shaped complaints are named explicitly and routed to emergency care, ahead of anything
+else in the reply, because an appointment offered in their place is the one failure here that is
+worse than being unhelpful.
+
+### Saying hello once
+
+Two facts the model cannot establish for itself are stated for it: who it is talking to, and
+whether it has already introduced itself.
+
+The name comes from the authenticated caller — `requireAuth` reads it from the database row
+alongside the ids, so it is verified exactly as they are and confers exactly as much authority
+outside its own scope: none. It never comes from the chat, which is the difference between an
+assistant that knows who it is talking to and one that can be told it is talking to somebody
+else. It is reduced to a first name of letters before it reaches a prompt, and it goes no
+further than that prompt: no reply payload carries it, and the only place it lands on disk is
+inside whatever sentence the assistant wrote with it.
+
+`isFirstReply` is derived from whether the session has an assistant turn yet, not tracked in a
+column. A model cannot work it out — history is trimmed to the last few turns, so the twentieth
+message of a long conversation arrives looking exactly like the first — and a stored flag would
+be a second copy of a fact the transcript already answers, with the usual consequence: a turn
+that fails after setting it leaves a conversation that has been greeted without being greeted.
+Recomputed from rows, a reload, a second tab, a REST client and a restart all reach the same
+answer.
+
 ### A conversation is created by a message, not by a click
 
 "New Chat" writes nothing. It navigates to the chat with no `?session=`, which the page reads
