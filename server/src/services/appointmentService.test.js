@@ -412,6 +412,65 @@ describe('availability', () => {
     // Open round the clock at 30-minute slots: a full day is 48 of them, not 96 or 144.
     expect(slots).toHaveLength(48);
   });
+
+  /**
+   * Narrowing to a part of the day, in the CLINIC's hours.
+   *
+   * "Tuesday morning" is the clinic's morning. Filtering in the reader's zone instead is what
+   * turned a request for a morning appointment into a list of the clinic's afternoon, and it is
+   * why this is decided here — the one place the clinic's timezone is already known — rather than
+   * in the browser that is going to draw it.
+   */
+  it('narrows to a part of the clinic’s day when asked', async () => {
+    const date = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const response = await request(app)
+      .get(
+        `/api/appointments/availability?providerId=${tenant.providerId}&date=${date}&timeOfDay=morning`,
+      )
+      .set(authorise(accessToken))
+      .expect(200);
+
+    const { slots, dayCount, timezone, timeOfDay } = response.body.data;
+
+    expect(timeOfDay).toBe('morning');
+    expect(timezone).toBe('UTC');
+
+    // Midnight to noon at 30-minute slots. The unnarrowed day is 48, and `dayCount` still reports
+    // it — that is what tells a caller "the morning is full" from "the day is".
+    expect(slots).toHaveLength(24);
+    expect(dayCount).toBe(48);
+
+    for (const slot of slots) {
+      expect(new Date(slot).getUTCHours(), slot).toBeLessThan(12);
+    }
+  });
+
+  it('returns the whole day when no part of it was named', async () => {
+    const date = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const response = await request(app)
+      .get(`/api/appointments/availability?providerId=${tenant.providerId}&date=${date}`)
+      .set(authorise(accessToken))
+      .expect(200);
+
+    expect(response.body.data.timeOfDay).toBeNull();
+    expect(response.body.data.slots).toHaveLength(48);
+    expect(response.body.data.dayCount).toBe(48);
+  });
+
+  it('refuses a part of the day it does not recognise, rather than guessing', async () => {
+    const date = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const response = await request(app)
+      .get(
+        `/api/appointments/availability?providerId=${tenant.providerId}&date=${date}&timeOfDay=elevenses`,
+      )
+      .set(authorise(accessToken))
+      .expect(422);
+
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+  });
 });
 
 /**

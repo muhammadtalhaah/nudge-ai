@@ -15,11 +15,17 @@ import {
 } from '@/components/ui/table';
 import AppStatusBadge from '@/components/shared/AppStatusBadge';
 import { Button } from '@/components/ui/button';
+import { useClinicTimezone } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/formatDate';
 
 const isCancellable = (status) => status === 'CONFIRMED' || status === 'PENDING';
 
 const AppointmentTable = ({ appointments, onCancel, cancellingId }) => {
+  // Clinic time, like everywhere else an appointment is shown. A card that renders the
+  // reader's zone while the chat renders the clinic's makes two screens disagree about the
+  // same booking.
+  const clinicTimezone = useClinicTimezone();
+
   return (
     <Table>
       <TableHeader>
@@ -38,7 +44,7 @@ const AppointmentTable = ({ appointments, onCancel, cancellingId }) => {
           // Stable database id as the key, never an array index.
           <TableRow key={appointment.id}>
             <TableCell className="font-medium whitespace-nowrap">
-              {formatDateTime(appointment.startsAt)}
+              {formatDateTime(appointment.startsAt, clinicTimezone)}
             </TableCell>
             <TableCell>{appointment.providerName}</TableCell>
             <TableCell className="text-muted-foreground">{appointment.providerSpecialty}</TableCell>
@@ -55,7 +61,7 @@ const AppointmentTable = ({ appointments, onCancel, cancellingId }) => {
                   disabled={cancellingId === appointment.id}
                   // Names the specific appointment, so a screen reader user knows which of
                   // several identical "Cancel" buttons they are on.
-                  aria-label={`Cancel appointment with ${appointment.providerName} on ${formatDateTime(appointment.startsAt)}`}
+                  aria-label={`Cancel appointment with ${appointment.providerName} on ${formatDateTime(appointment.startsAt, clinicTimezone)}`}
                 >
                   {cancellingId === appointment.id ? 'Cancelling' : 'Cancel'}
                 </Button>

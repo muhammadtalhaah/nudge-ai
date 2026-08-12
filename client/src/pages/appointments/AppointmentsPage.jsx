@@ -37,6 +37,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppointments, useCancelAppointment } from '@/hooks/useAppointments';
+import { useClinicTimezone } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/formatDate';
 
 const SCOPES = [
@@ -55,6 +56,10 @@ const AppointmentsPage = () => {
 
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [pendingCancel, setPendingCancel] = useState(null);
+
+  // The confirmation dialog names the appointment being cancelled, and it must name the same
+  // time the row behind it does.
+  const clinicTimezone = useClinicTimezone();
 
   const { data, isPending, isError, error, refetch, isFetching } = useAppointments({ scope });
   const cancelAppointment = useCancelAppointment();
@@ -201,7 +206,7 @@ const AppointmentsPage = () => {
             <AlertDialogTitle>Cancel this appointment?</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingCancel
-                ? `${pendingCancel.providerName} on ${formatDateTime(pendingCancel.startsAt)}. The slot will be released for someone else.`
+                ? `${pendingCancel.providerName} on ${formatDateTime(pendingCancel.startsAt, clinicTimezone)}. The slot will be released for someone else.`
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>

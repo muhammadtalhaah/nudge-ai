@@ -308,6 +308,15 @@ const mergeDraft = (draft, fields) => {
     providerId: changedSpecialty && !fields.providerName ? null : (draft.providerId ?? null),
     date: draft.date ?? null,
     time: draft.time ?? null,
+    /**
+     * Never inherited, and the only field here that is deliberately turn-scoped.
+     *
+     * "Morning" qualifies the question being asked, not the booking being built — the draft has
+     * no such field for it to come from, and it must stay that way. Carrying it would have
+     * "what about Thursday?" silently answered for Thursday *morning* because a previous turn
+     * said so, which is the same class of bug as inheriting the day.
+     */
+    timeOfDay: null,
     notes: draft.notes ?? null,
   };
 
@@ -358,6 +367,21 @@ const needsDetail = (text, prefill, missing, extras = {}) => ({
 });
 
 /**
+ * A clinic calendar date, written the way a person reads it: "Tuesday 18 August".
+ *
+ * Formatted in UTC deliberately. The input is already a calendar date in the clinic's
+ * timezone, so there is no instant to convert — letting the runtime's own zone reinterpret it
+ * is the one thing that could shift the day, and name the wrong Tuesday.
+ */
+const clinicDayLabel = (isoDate) =>
+  new Intl.DateTimeFormat('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(new Date(`${isoDate}T12:00:00Z`));
+
+/**
  * Answer "what is free on Thursday?" from the calendar.
  *
  * The one place the assistant reports availability, and it does not decide any of it: the
@@ -365,8 +389,16 @@ const needsDetail = (text, prefill, missing, extras = {}) => ({
  * real bookings. The model is told in its prompt never to claim a time is free, precisely so
  * that the only free times a person is ever shown are these.
  *
- * A doctor and a day are both required, and neither is guessed. The draft supplies them when
- * the conversation already has them, so "and what about Friday?" works.
+ * Every sentence here is written by this function, not the model. That is a change from
+ * forwarding `extraction.reply`, and the reason is that the prose has to agree with a lookup
+ * that happens *after* the model has finished writing: which doctor resolved, which day was
+ * actually queried, and whether anything came back. Only this function knows all three. The
+ * model still writes a draft of the same sentence — the prompt asks it to introduce the list
+ * and name the day — and that draft is what streams while this runs, so the text a person
+ * reads early is replaced by one that says the same thing and is guaranteed to be true.
+ *
+ * A doctor and a day are both required, and neither is guessed. The draft supplies the doctor
+ * when the conversation already has one, so "and what about Friday?" works.
  *
  * @param {import('./appointmentService.js').Caller} caller
  * @param {object} extraction
@@ -397,10 +429,12 @@ const actOnAvailability = async (caller, extraction, context) => {
   // Availability is per-doctor, so "when are you free this week?" cannot be answered as
   // asked. Showing the doctors is the useful half of the answer.
   if (resolution.status !== 'resolved') {
+    const day = fields.date ? ` for ${clinicDayLabel(fields.date)}` : '';
+
     return needsDetail(
       resolution.status === 'ambiguous'
         ? 'Several of our doctors match that — whose availability would you like?'
-        : `${extraction.reply} Which doctor did you have in mind?`,
+        : `I can check that${day} — which doctor did you have in mind?`,
       prefill,
       ['providerName'],
       {
@@ -423,29 +457,67 @@ const actOnAvailability = async (caller, extraction, context) => {
    * "which day shall I check?".
    */
   if (!fields.date) {
-    return needsDetail(`${extraction.reply} Which day shall I check?`, prefill, ['date'], {
-      providers: [toProviderSummary(provider)],
-    });
+    return needsDetail(
+      `Which day would you like me to check for ${provider.fullName}?`,
+      prefill,
+      ['date'],
+      {
+        providers: [toProviderSummary(provider)],
+      },
+    );
   }
 
-  const { slots } = await appointmentService.getAvailability(caller, provider.id, fields.date);
+  const window = fields.timeOfDay ?? null;
+  const day = clinicDayLabel(fields.date);
 
-  if (slots.length === 0) {
+  const { slots, dayCount, timezone } = await appointmentService.getAvailability(
+    caller,
+    provider.id,
+    fields.date,
+    window,
+  );
+
+  if (dayCount === 0) {
     // The date is dropped from what carries forward — it is the part that did not work, and
     // leaving it in would have the next vague turn ask about the same full day.
     return needsDetail(
-      `${provider.fullName} has nothing free that day. Would another day work?`,
+      `${provider.fullName} has nothing free on ${day}. Would another day work?`,
       { ...prefill, date: null },
       ['date'],
       { providers: [toProviderSummary(provider)] },
     );
   }
 
+  /*
+   * The part of the day they asked for is full, but the day itself is not.
+   *
+   * Widening rather than refusing. "Nothing that morning" and stopping there makes someone ask
+   * a second question to find out what this one already knows — and the alternative they need
+   * in order to decide is sitting one query away. The narrowing is dropped from the sentence
+   * and from `slotWindow`, because what is shown below is now the whole day and the label has
+   * to match the list.
+   */
+  const widened = window && slots.length === 0;
+  const shown = widened
+    ? (await appointmentService.getAvailability(caller, provider.id, fields.date)).slots
+    : slots;
+
+  const text = widened
+    ? `${provider.fullName} has nothing free on the ${window} of ${day}, but these are open later that day.`
+    : window
+      ? `Here are ${provider.fullName}'s free times on the ${window} of ${day}.`
+      : `Here are ${provider.fullName}'s free times on ${day}.`;
+
   return {
     kind: REPLY_KIND.SLOT_LIST,
-    text: extraction.reply,
-    slots,
+    text,
+    slots: shown,
     slotDate: fields.date,
+    // The zone these instants are to be read in. Sent rather than assumed so that a reply
+    // reloaded from history renders in the zone it was computed for, and so the client never
+    // has to guess whether "09:00" meant the clinic's or the reader's.
+    slotTimezone: timezone,
+    slotWindow: widened ? null : window,
     providers: [toProviderSummary(provider)],
     // Carried so the conversation remembers whose day this was: naming one of these times is
     // then a complete booking rather than an orphaned "10:00".

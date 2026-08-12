@@ -11,12 +11,14 @@
 
 import { z } from 'zod';
 
+import { localHourDecimal, zonedCalendarDate } from './timezone.js';
 import {
   APPOINTMENT_SOURCE_VALUES,
   APPOINTMENT_STATUS_VALUES,
   BOOKING_FIELDS,
   CHAT_INTENT_VALUES,
   LIMITS,
+  TIME_OF_DAY_VALUES,
 } from './constants.js';
 
 /* ------------------------------------------------------------------ auth ---- */
@@ -92,22 +94,31 @@ const localMidnight = (isoDate) => {
   return new Date(year, month - 1, day).getTime();
 };
 
-const startOfToday = () => {
+/**
+ * Midnight starting "today", in whichever zone is being judged in.
+ *
+ * The clinic's, when one is given. Late in the evening east of the clinic those are different
+ * dates, and it is the clinic's calendar an appointment lands on — a form that rejected the
+ * clinic's own current day as past would be refusing a bookable day.
+ */
+const startOfToday = (timeZone) => {
+  if (timeZone) return localMidnight(zonedCalendarDate(new Date(), timeZone));
+
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 };
 
 /**
- * Today or later, in the user's own timezone.
+ * Today or later, in the clinic's timezone.
  *
  * Anything that is not a date passes. Zod carries on running a field's remaining checks after
  * a format check has already failed, so without this "not-a-date" came back as both malformed
  * *and* in the past — a second error that says nothing, on a value there is nothing to say
  * about. The format rule is the one complaint that belongs to it.
  */
-const isNotPastDate = (isoDate) => {
+const isNotPastDate = (isoDate, timeZone) => {
   const chosen = localMidnight(isoDate);
-  return Number.isNaN(chosen) || chosen >= startOfToday();
+  return Number.isNaN(chosen) || chosen >= startOfToday(timeZone);
 };
 
 /**
@@ -115,41 +126,60 @@ const isNotPastDate = (isoDate) => {
  *
  * Only ever true for today — 09:00 is not in the past on any other date, which is exactly why
  * this cannot be a rule on `time` alone. Anything unparseable is not past, for the reason above.
+ *
+ * "Now" is read in the clinic's zone too, so that the comparison is between two clinic
+ * wall-clocks. Mixing the two — the clinic's chosen day against the reader's clock — is how a
+ * perfectly bookable morning gets refused as already gone.
  */
-const isPastTimeToday = (isoDate, clockTime) => {
+const isPastTimeToday = (isoDate, clockTime, timeZone) => {
   if (typeof clockTime !== 'string') return false;
-  if (localMidnight(isoDate) !== startOfToday()) return false;
+  if (localMidnight(isoDate) !== startOfToday(timeZone)) return false;
 
   const [hour, minute] = clockTime.split(':').map(Number);
   const now = new Date();
-  return hour * 60 + minute <= now.getHours() * 60 + now.getMinutes();
+
+  const nowMinutes = timeZone
+    ? localHourDecimal(now, timeZone) * 60
+    : now.getHours() * 60 + now.getMinutes();
+
+  return hour * 60 + minute <= nowMinutes;
 };
 
 /**
- * What the booking form submits. The form collects a date and a time separately because
- * that is the natural UI, then composes them into `startsAt` in the browser's timezone.
+ * What the booking form submits. The form collects a date and a time separately because that is
+ * the natural UI, then composes them into `startsAt` in the clinic's timezone.
+ *
+ * A factory rather than a constant because both past-date rules depend on where "now" is, and
+ * that is the clinic — the same zone the form's own picker labels its times in. A schema frozen
+ * at module load could not know it.
  *
  * The past-date rule is enforced here as well as by the date input's `min`, because `min` only
  * constrains the picker: a date typed into the field, or one the assistant prefilled from
  * "last Tuesday", reaches submit untouched. `appointmentService.book` refuses a past instant
  * regardless — this is the same rule stated early, on the field the user has to change.
+ *
+ * @param {string | null} [timeZone] The clinic's IANA zone; the viewer's when absent.
  */
-export const bookingFormSchema = z
-  .object({
-    providerId: z.uuid('Choose a provider'),
-    date: calendarDateSchema.refine(isNotPastDate, 'That date has passed — choose today or later'),
-    time: clockTimeSchema,
-    notes: z.string().trim().max(LIMITS.NOTES_MAX_LENGTH, 'Notes are too long').optional(),
-  })
-  /*
-   * Cross-field, so it cannot live on `time`: whether 09:00 has passed depends entirely on which
-   * day was chosen. Reported against `time` anyway, because that is the field to change — moving
-   * the day to fix "that time has passed today" is not what anyone means.
-   */
-  .refine((values) => !isPastTimeToday(values.date, values.time), {
-    path: ['time'],
-    message: 'That time has already passed today',
-  });
+export const createBookingFormSchema = (timeZone = null) =>
+  z
+    .object({
+      providerId: z.uuid('Choose a provider'),
+      date: calendarDateSchema.refine(
+        (isoDate) => isNotPastDate(isoDate, timeZone),
+        'That date has passed — choose today or later',
+      ),
+      time: clockTimeSchema,
+      notes: z.string().trim().max(LIMITS.NOTES_MAX_LENGTH, 'Notes are too long').optional(),
+    })
+    /*
+     * Cross-field, so it cannot live on `time`: whether 09:00 has passed depends entirely on which
+     * day was chosen. Reported against `time` anyway, because that is the field to change — moving
+     * the day to fix "that time has passed today" is not what anyone means.
+     */
+    .refine((values) => !isPastTimeToday(values.date, values.time, timeZone), {
+      path: ['time'],
+      message: 'That time has already passed today',
+    });
 
 export const cancelAppointmentSchema = z.object({
   reason: z.string().trim().max(300, 'Reason is too long').optional(),
@@ -159,10 +189,17 @@ export const rescheduleAppointmentSchema = z.object({
   startsAt: isoDateTimeSchema,
 });
 
-/** Query for a provider's free slots on one local calendar date. */
+/**
+ * Query for a provider's free slots on one local calendar date.
+ *
+ * `timeOfDay` narrows the answer to a part of the clinic's day. Optional, and absent means the
+ * whole day — the assistant sets it when someone asked for "Tuesday morning", and the booking
+ * form never does, because its picker shows the day and lets the user scan it.
+ */
 export const availabilityQuerySchema = z.object({
   providerId: z.uuid('Choose a provider'),
   date: calendarDateSchema,
+  timeOfDay: z.enum(TIME_OF_DAY_VALUES).optional(),
 });
 
 export const providerListQuerySchema = z.object({
@@ -238,6 +275,18 @@ export const bookingFieldsSchema = z
     providerName: absentAsNull(z.string().trim().max(120)),
     date: absentAsNull(calendarDateSchema),
     time: absentAsNull(clockTimeSchema),
+    /**
+     * Which part of the day was asked for, when one was and no exact time has been named.
+     *
+     * An unrecognised value is dropped rather than failing the turn — unlike a date, this is
+     * a narrowing hint. Losing it shows someone the whole day, which is a worse answer but
+     * still a true one; rejecting the extraction over it would cost them the turn entirely.
+     */
+    timeOfDay: z
+      .enum(TIME_OF_DAY_VALUES)
+      .nullish()
+      .catch(null)
+      .transform((value) => value ?? null),
     notes: absentAsNull(z.string().trim().max(LIMITS.NOTES_MAX_LENGTH)),
   })
   .default({});

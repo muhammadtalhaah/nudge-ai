@@ -21,6 +21,15 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  /**
+   * The tenant, which rides along with the session for one reason: its timezone.
+   *
+   * Every appointment and every free slot on screen is a UTC instant that has to be rendered in
+   * some zone, and the only one that means anything for a clinic is the clinic's. Holding it here
+   * rather than fetching it separately is what lets the first paint be correct — the router
+   * already waits on `isBootstrapping`, so there is no second gate to add.
+   */
+  const [business, setBusiness] = useState(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const queryClient = useQueryClient();
 
@@ -33,6 +42,7 @@ export const AuthProvider = ({ children }) => {
   const clearSession = useCallback(() => {
     setAccessToken(null);
     setUser(null);
+    setBusiness(null);
     queryClient.clear();
   }, [queryClient]);
 
@@ -51,6 +61,7 @@ export const AuthProvider = ({ children }) => {
         const restored = await refreshSession();
         if (!cancelled && restored?.user) {
           setUser(restored.user);
+          setBusiness(restored.business ?? null);
         }
       } finally {
         // Always runs: a failed restore is the normal case for a first-time visitor, and the
@@ -70,6 +81,7 @@ export const AuthProvider = ({ children }) => {
     if (result.ok) {
       setAccessToken(result.data.accessToken);
       setUser(result.data.user);
+      setBusiness(result.data.business ?? null);
     }
     return result;
   }, []);
@@ -79,6 +91,7 @@ export const AuthProvider = ({ children }) => {
     if (result.ok) {
       setAccessToken(result.data.accessToken);
       setUser(result.data.user);
+      setBusiness(result.data.business ?? null);
     }
     return result;
   }, []);
@@ -96,13 +109,14 @@ export const AuthProvider = ({ children }) => {
   const value = useMemo(
     () => ({
       user,
+      business,
       isAuthenticated: Boolean(user),
       isBootstrapping,
       login,
       signup,
       logout,
     }),
-    [user, isBootstrapping, login, signup, logout],
+    [user, business, isBootstrapping, login, signup, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -115,5 +129,19 @@ export const useAuth = () => {
   }
   return context;
 };
+
+/**
+ * The clinic's timezone, or null when there isn't one to be had.
+ *
+ * Its own hook because almost every component that renders a time needs exactly this and nothing
+ * else from auth, and because null already has a defined meaning downstream: the formatters fall
+ * back to the viewer's zone rather than rendering nothing.
+ *
+ * Deliberately does NOT go through `useAuth`, and so does not throw outside a provider. That
+ * strictness is right for `useAuth` — code that reads the user or calls `logout` is broken without
+ * a session and should say so loudly. This is a display preference with a working default, and
+ * anything that merely shows a time should degrade rather than take the screen down with it.
+ */
+export const useClinicTimezone = () => useContext(AuthContext)?.business?.timezone ?? null;
 
 export default AuthContext;

@@ -15,7 +15,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { CalendarPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { bookingFormSchema } from '@shared/schemas.js';
+import { createBookingFormSchema } from '@shared/schemas.js';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -33,7 +33,14 @@ import { Spinner } from '@/components/ui/spinner';
 import { Textarea } from '@/components/ui/textarea';
 import { useAvailability, useCreateAppointment, useProviders } from '@/hooks/useAppointments';
 import { cn } from '@/lib/utils';
-import { formatTime, toIsoInstant, todayIsoDate } from '@/utils/formatDate';
+import { useClinicTimezone } from '@/context/AuthContext';
+import {
+  formatClockValue,
+  formatTime,
+  toIsoInstant,
+  todayIsoDate,
+  zoneLabel,
+} from '@/utils/formatDate';
 import { applyServerErrors } from '@/utils/serverErrors';
 
 const FIELD_NAMES = ['providerId', 'date', 'time', 'notes'];
@@ -56,6 +63,21 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
   const createAppointment = useCreateAppointment();
   const [formError, setFormError] = useState(null);
 
+  /**
+   * Every time this form shows or accepts is the clinic's, not the reader's.
+   *
+   * That single choice has to hold across three places or the form books the wrong instant: the
+   * labels on the slot buttons, the "today" the date input floors itself at, and the zone the
+   * chosen date and time are finally composed in. They are all fed from here.
+   */
+  const clinicTimezone = useClinicTimezone();
+
+  /**
+   * Rebuilt when the zone arrives, because both of its past-date rules are judged in that zone:
+   * whether the chosen day has gone by, and whether the chosen time has gone by today.
+   */
+  const schema = useMemo(() => createBookingFormSchema(clinicTimezone), [clinicTimezone]);
+
   const {
     control,
     register,
@@ -65,7 +87,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
     reset,
     formState: { errors, isSubmitting },
   } = useForm({
-    resolver: zodResolver(bookingFormSchema),
+    resolver: zodResolver(schema),
     mode: 'onChange',
     reValidateMode: 'onChange',
     defaultValues: {
@@ -105,7 +127,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
   const onSubmit = async (values) => {
     setFormError(null);
 
-    const startsAt = toIsoInstant(values.date, values.time);
+    const startsAt = toIsoInstant(values.date, values.time, clinicTimezone);
     if (!startsAt) {
       setError('date', { type: 'manual', message: 'That date and time could not be read' });
       return;
@@ -171,7 +193,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
 
       <Field data-invalid={Boolean(errors.providerId)}>
         {/* "Provider" throughout — the label, the placeholder, and the message in
-            `bookingFormSchema`. Labelling it Doctor while the validation asked for a provider
+            `createBookingFormSchema`. Labelling it Doctor while the validation asked for a provider
             read as an error about a field that was not on screen. */}
         <FieldLabel htmlFor="providerId">
           Provider
@@ -224,11 +246,11 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
              * Greys out every earlier day in the native picker, so a past date cannot be
              * *selected* at all. It is not the whole guard: `min` does not constrain a typed
              * date, and this form is `noValidate`, so the browser will not block submit either
-             * — `bookingFormSchema` refuses a past date, and `appointmentService.book` refuses a
+             * — `createBookingFormSchema` refuses a past date, and `appointmentService.book` refuses a
              * past instant behind it. Recomputed each render rather than memoised, so a tab left
              * open overnight does not still offer yesterday.
              */
-            min={todayIsoDate()}
+            min={todayIsoDate(clinicTimezone)}
             aria-invalid={Boolean(errors.date)}
             {...register('date')}
           />
@@ -256,7 +278,14 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
       {/* Free slots for the chosen doctor and day, so the user is not guessing. */}
       {selectedProviderId && selectedDate ? (
         <Field>
-          <FieldLabel>Available times</FieldLabel>
+          <FieldLabel>
+            Available times
+            {clinicTimezone ? (
+              <span className="text-muted-foreground ml-1 text-xs font-normal">
+                · clinic time ({zoneLabel(clinicTimezone)})
+              </span>
+            ) : null}
+          </FieldLabel>
           {isLoadingSlots ? (
             <div className="flex flex-wrap gap-2">
               {Array.from({ length: 6 }).map((_unused, index) => (
@@ -270,8 +299,20 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
               render={({ field }) => (
                 <div className="flex flex-wrap gap-2" role="group" aria-label="Available times">
                   {slots.slice(0, 16).map((slot) => {
-                    const label = formatTime(slot);
-                    const isSelected = field.value === label;
+                    /*
+                     * Two renderings of the same instant, and they are not interchangeable.
+                     *
+                     * `value` is canonical 24-hour HH:MM — it is what goes into the `time` input
+                     * and what gets composed into the booking, so it must be the one shape both
+                     * `clockTimeSchema` and `<input type="time">` accept. A locale-formatted
+                     * string was being used for this, which in a 12-hour locale meant clicking a
+                     * slot wrote "02:00 PM" into a field that only reads "14:00".
+                     *
+                     * `label` is what the button says, in the reader's own conventions.
+                     */
+                    const value = formatClockValue(slot, clinicTimezone);
+                    const label = formatTime(slot, clinicTimezone);
+                    const isSelected = field.value === value;
                     return (
                       <Button
                         key={slot}
@@ -279,7 +320,7 @@ const BookingForm = ({ prefill, highlight = [], onBooked, chatSessionId, compact
                         size="sm"
                         variant={isSelected ? 'default' : 'outline'}
                         aria-pressed={isSelected}
-                        onClick={() => field.onChange(label)}
+                        onClick={() => field.onChange(value)}
                       >
                         {label}
                       </Button>

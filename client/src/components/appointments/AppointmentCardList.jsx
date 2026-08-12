@@ -10,11 +10,17 @@ import { CalendarDays, Stethoscope } from 'lucide-react';
 import AppStatusBadge from '@/components/shared/AppStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { useClinicTimezone } from '@/context/AuthContext';
 import { formatDateTime } from '@/utils/formatDate';
 
 const isCancellable = (status) => status === 'CONFIRMED' || status === 'PENDING';
 
 const AppointmentCardList = ({ appointments, onCancel, cancellingId }) => {
+  // Clinic time, like everywhere else an appointment is shown. A card that renders the
+  // reader's zone while the chat renders the clinic's makes two screens disagree about the
+  // same booking.
+  const clinicTimezone = useClinicTimezone();
+
   return (
     <ul className="space-y-3">
       {appointments.map((appointment) => (
@@ -27,7 +33,7 @@ const AppointmentCardList = ({ appointments, onCancel, cancellingId }) => {
                     className="text-muted-foreground size-4 shrink-0"
                     aria-hidden="true"
                   />
-                  {formatDateTime(appointment.startsAt)}
+                  {formatDateTime(appointment.startsAt, clinicTimezone)}
                 </div>
                 <AppStatusBadge status={appointment.status} />
               </div>
@@ -50,7 +56,7 @@ const AppointmentCardList = ({ appointments, onCancel, cancellingId }) => {
                   className="w-full"
                   onClick={() => onCancel(appointment)}
                   disabled={cancellingId === appointment.id}
-                  aria-label={`Cancel appointment with ${appointment.providerName} on ${formatDateTime(appointment.startsAt)}`}
+                  aria-label={`Cancel appointment with ${appointment.providerName} on ${formatDateTime(appointment.startsAt, clinicTimezone)}`}
                 >
                   {cancellingId === appointment.id ? 'Cancelling' : 'Cancel appointment'}
                 </Button>

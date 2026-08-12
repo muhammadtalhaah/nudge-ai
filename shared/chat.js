@@ -58,10 +58,16 @@
  * @property {ChatAppointmentSummary} [appointment] Set when kind is APPOINTMENT_CREATED.
  * @property {ChatAppointmentSummary[]} [appointments] Set when kind is APPOINTMENT_LIST.
  * @property {string[]} [slots] Free start times as ISO instants, set when kind is SLOT_LIST.
- *   Instants rather than "10:00" for the same reason a booking confirmation carries no time:
- *   the server knows the clinic's timezone and the client knows the viewer's, and only one of
- *   them should be formatting.
+ *   Instants rather than "10:00" so that formatting happens in exactly one place. Which zone
+ *   that formatting uses is `slotTimezone`, not the viewer's: these are times at a clinic, and
+ *   a person choosing one is choosing when to physically be there.
  * @property {string} [slotDate] The day those slots fall on, YYYY-MM-DD in clinic time.
+ * @property {string} [slotTimezone] The IANA zone `slots` and `slotDate` are to be read in —
+ *   the clinic's. Sent with the payload rather than assumed, so a reply replayed from history
+ *   still renders in the zone it was computed for.
+ * @property {string | null} [slotWindow] The part of the day the list was narrowed to, one of
+ *   TIME_OF_DAY, or null for a whole day. The prose already says so; this is here so the UI can
+ *   label the list without parsing the sentence.
  * @property {boolean} [degraded] True when the reply came from the offline rule-based
  *   provider rather than an LLM. The UI surfaces this rather than passing a keyword matcher
  *   off as a language model.

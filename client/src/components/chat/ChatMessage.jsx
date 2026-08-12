@@ -15,8 +15,9 @@ import BookingForm from '@/components/shared/BookingForm';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { useClinicTimezone } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
-import { formatDateTime, formatTime } from '@/utils/formatDate';
+import { formatDateTime, formatTime, zoneLabel } from '@/utils/formatDate';
 
 const ProviderOptions = ({ providers }) => (
   <ul className="mt-3 grid gap-2">
@@ -34,24 +35,37 @@ const ProviderOptions = ({ providers }) => (
 /**
  * Free start times for one doctor on one day.
  *
- * The server sends instants, not "10:00", so these are formatted here in the viewer's own
- * timezone — the same rule the appointment cards follow, and the reason no time appears in
- * the assistant's prose above them.
+ * The server sends instants, not "10:00", so the zone is chosen here — and it is the clinic's,
+ * carried on the reply itself. These are times to be at a clinic, so drawing them in the reader's
+ * zone silently renames them: a clinic on UTC offering a 09:00 was displayed as "14:00" to
+ * someone five hours east, under a sentence that said morning.
+ *
+ * The zone is named next to the list for the same reason. Anyone whose own clock disagrees needs
+ * to be told which one they are reading, and a caption is cheaper than them finding out at the
+ * appointment.
  */
-const SlotList = ({ slots }) => (
-  <ul className="mt-3 flex flex-wrap gap-1.5">
-    {slots.map((slot) => (
-      <li
-        key={slot}
-        className="bg-background/60 rounded-md border px-2 py-1 font-mono text-xs tabular-nums"
-      >
-        {formatTime(slot)}
-      </li>
-    ))}
-  </ul>
+const SlotList = ({ slots, timeZone }) => (
+  <div className="mt-3">
+    <ul className="flex flex-wrap gap-1.5">
+      {slots.map((slot) => (
+        <li
+          key={slot}
+          className="bg-background/60 rounded-md border px-2 py-1 font-mono text-xs tabular-nums"
+        >
+          {formatTime(slot, timeZone)}
+        </li>
+      ))}
+    </ul>
+
+    {timeZone ? (
+      <p className="text-muted-foreground mt-1.5 text-xs">
+        Clinic time ({zoneLabel(timeZone, slots[0])})
+      </p>
+    ) : null}
+  </div>
 );
 
-const AppointmentList = ({ appointments }) => {
+const AppointmentList = ({ appointments, timeZone }) => {
   if (appointments.length === 0) return null;
 
   return (
@@ -62,7 +76,7 @@ const AppointmentList = ({ appointments }) => {
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{appointment.providerName}</p>
               <p className="text-muted-foreground text-xs">
-                {formatDateTime(appointment.startsAt)}
+                {formatDateTime(appointment.startsAt, timeZone)}
               </p>
             </div>
             <AppStatusBadge status={appointment.status} />
@@ -77,10 +91,11 @@ const AppointmentList = ({ appointments }) => {
  * The confirmation card, shown for both routes into a booking — one the assistant completed
  * itself, and one finished in the form below its question.
  *
- * The time is formatted here and nowhere else: the server knows the clinic's timezone and only
- * the browser knows the viewer's, so the prose above deliberately names no time.
+ * The time is formatted here and nowhere else, which is why the prose above names none: one
+ * place to render an instant, and one zone — the clinic's — so a confirmation cannot disagree
+ * with the slot that was picked to make it.
  */
-const BookedConfirmation = ({ appointment }) => (
+const BookedConfirmation = ({ appointment, timeZone }) => (
   <div className="border-status-confirmed/40 bg-status-confirmed/10 mt-3 flex items-start gap-2 rounded-md border px-3 py-2">
     <CalendarCheck
       className="text-status-confirmed-foreground mt-0.5 size-4 shrink-0"
@@ -90,7 +105,7 @@ const BookedConfirmation = ({ appointment }) => (
       <div className="min-w-0 text-sm">
         <p className="font-medium">{appointment.providerName}</p>
         <p className="text-muted-foreground text-xs">
-          {formatDateTime(appointment.startsAt)} · {appointment.providerSpecialty}
+          {formatDateTime(appointment.startsAt, timeZone)} · {appointment.providerSpecialty}
         </p>
       </div>
       {/* The same badge the appointments page uses, so a confirmation reads identically
@@ -142,6 +157,7 @@ const BookingDetailsCard = ({ reply, onBooked, chatSessionId, withProviders = tr
 const ChatMessage = ({ message, onBooked, chatSessionId, isBookingResolved, isFirst, isLast }) => {
   const isUser = message.role === 'user';
   const reply = message.reply;
+  const clinicTimezone = useClinicTimezone();
 
   /**
    * Whether the person asked for the form on a turn where the assistant only asked a question.
@@ -199,11 +215,11 @@ const ChatMessage = ({ message, onBooked, chatSessionId, isBookingResolved, isFi
         {!isUser && reply ? (
           <div className="text-left">
             {reply.kind === 'appointment_created' && reply.appointment ? (
-              <BookedConfirmation appointment={reply.appointment} />
+              <BookedConfirmation appointment={reply.appointment} timeZone={clinicTimezone} />
             ) : null}
 
             {reply.kind === 'appointment_list' && reply.appointments ? (
-              <AppointmentList appointments={reply.appointments} />
+              <AppointmentList appointments={reply.appointments} timeZone={clinicTimezone} />
             ) : null}
 
             {reply.kind === 'provider_list' && reply.providers ? (
@@ -211,7 +227,12 @@ const ChatMessage = ({ message, onBooked, chatSessionId, isBookingResolved, isFi
             ) : null}
 
             {/* Free times, read off the real calendar rather than claimed by the model. */}
-            {reply.kind === 'slot_list' && reply.slots ? <SlotList slots={reply.slots} /> : null}
+            {reply.kind === 'slot_list' && reply.slots ? (
+              // The zone the server computed these in, preferred over the session's: a
+              // conversation replayed from history then still reads in the zone its times were
+              // resolved for, even if the clinic has since been reconfigured.
+              <SlotList slots={reply.slots} timeZone={reply.slotTimezone ?? clinicTimezone} />
+            ) : null}
 
             {/*
               The assistant is still gathering details and has asked for them in the sentence
